@@ -82,18 +82,18 @@ class Attention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
-        B, N, C = x.shape
+        B, N, C = x.shape   # B, N+1, C
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple), [B, H, N+1, C//H] * 3
 
-        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = (q @ k.transpose(-2, -1)) * self.scale   # [B, H, N+1, N+1]
         attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
+        attn = self.attn_drop(attn) # [B, H, N+1, N+1]
 
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C) # [B, H, N+1, C//H] -> [B, N+1, C]
         x = self.proj(x)
         x = self.proj_drop(x)
-        return x
+        return x    # [B, N+1, C]
 
 class LayerScale(nn.Module):
     def __init__(self, dim, init_values=1e-5, inplace=False):
@@ -120,8 +120,8 @@ class Block(nn.Module):
         self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, x):
-        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
-        x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
+        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))     # [B, N+1, C]
+        x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))      # [B, N+1, C]
         return x
 
 class ResPostBlock(nn.Module):
@@ -216,9 +216,9 @@ class PatchEmbed(nn.Module):
         _assert(W == self.img_size[1], f"Input image width ({W}) doesn't match model ({self.img_size[1]}).")
         x = self.proj(x)
         if self.flatten:
-            x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC
+            x = x.flatten(2).transpose(1, 2)  # [B, C, H, W] -> [B, N, C]
         x = self.norm(x)
-        return x
+        return x    # [B, N, C]
 
 class HybridEmbed(nn.Module):
     """ CNN Feature Map Embedding
@@ -344,13 +344,13 @@ class VisionTransformer(nn.Module):
             # pos_embed has entry for class token, concat then add
             if self.cls_token is not None:
                 x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
-            x = x + self.pos_embed
-        return self.pos_drop(x)
+            x = x + self.pos_embed  # [B, N+1, C]
+        return self.pos_drop(x)     # [B, N+1, C]
         
     def forward_features(self, x):
-        x = self.patch_embed(x)
-        x = self._pos_embed(x)
-        x = self.norm_pre(x)
+        x = self.patch_embed(x) # [B, N, C]
+        x = self._pos_embed(x)  # [B, N+1, C]
+        x = self.norm_pre(x)    # [B, N+1, C]
         x = self.blocks(x)
         x = self.norm(x)
         return x

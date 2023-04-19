@@ -8,6 +8,7 @@ import sys
 from typing import Iterable, Optional
 import time 
 import torch
+import time
 
 from timm.data import Mixup
 from timm.utils import accuracy, ModelEma
@@ -36,7 +37,7 @@ def train_one_epoch(args, model: torch.nn.Module, criterion,
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     # metric_logger.add_meter('min_lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
-    print_freq = 10
+    print_freq = 200
 
     optimizer.zero_grad()
 
@@ -97,15 +98,15 @@ def train_one_epoch(args, model: torch.nn.Module, criterion,
             class_acc = None
         metric_logger.update(loss=loss_value)
         metric_logger.update(class_acc=class_acc)
-        # min_lr = 10.
+        min_lr = 10.
         max_lr = 0.
         for group in optimizer.param_groups:
-            # min_lr = min(min_lr, group["lr"])
+            min_lr = min(min_lr, group["lr"])
             max_lr = max(max_lr, group["lr"])
 
         metric_logger.update(lr=max_lr)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-        # metric_logger.update(min_lr=min_lr)
+        metric_logger.update(min_lr=min_lr)
         weight_decay_value = None
         for group in optimizer.param_groups:
             if group["weight_decay"] > 0:
@@ -121,7 +122,7 @@ def train_one_epoch(args, model: torch.nn.Module, criterion,
 
             log_writer.update(class_acc=class_acc, head="loss")
             log_writer.update(lr=max_lr, head="opt")
-            # log_writer.update(min_lr=min_lr, head="opt")
+            log_writer.update(min_lr=min_lr, head="opt")
             log_writer.update(weight_decay=weight_decay_value, head="opt")
             log_writer.set_step()
 
@@ -131,7 +132,7 @@ def train_one_epoch(args, model: torch.nn.Module, criterion,
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 @torch.no_grad()
-def evaluate(data_loader, model, device):
+def evaluate(data_loader, model, device, use_amp):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = loggers.MetricLogger(delimiter="  ")
@@ -140,25 +141,19 @@ def evaluate(data_loader, model, device):
     # switch to evaluation mode
     model.eval()
 
-    i = 0
-    for batch in metric_logger.log_every(data_loader, 10, header):
-        i += 1
-        images = batch[0]
-        target = batch[-1]
-
+    for images, targets in metric_logger.log_every(data_loader, 10, header):
         images = images.to(device, non_blocking=True)
-        target = target.to(device, non_blocking=True)
-
+        targets = targets.to(device, non_blocking=True)
         # compute output
-        # if use_amp:
-        #     with torch.cuda.amp.autocast():
-        #         output = model(images)
-        #         loss = criterion(output, target)
-        # else:
-        output = model(images)
-        loss = criterion(output, target)
+        if use_amp:
+            with torch.cuda.amp.autocast():
+                output = model(images)
+                loss = criterion(output, targets)
+        else:
+            output = model(images)
+            loss = criterion(output, targets)
 
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        acc1, acc5 = accuracy(output, targets, topk=(1, 5))
 
         batch_size = images.shape[0]
         metric_logger.update(loss=loss.item())
@@ -170,3 +165,38 @@ def evaluate(data_loader, model, device):
           .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+@torch.no_grad()
+def real_evaluate(data_loader, model, device, use_amp):
+    criterion = torch.nn.CrossEntropyLoss()
+
+    # switch to evaluation mode
+    model.eval()
+
+    best_acc1, best_acc5 = 0, 0
+    for iter, (images, targets) in enumerate(data_loader):
+
+        images = images.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
+
+        # compute output
+        if use_amp:
+            with torch.cuda.amp.autocast():
+                output = model(images)
+        else:
+            output = model(images)
+
+        acc1, acc5 = accuracy(output, targets, topk=(1, 5))
+
+        if iter % 10 == 0:
+            print()
+
+        if acc1 > best_acc1:
+            best_acc1 = acc1
+        if acc5 > best_acc5:
+            best_acc5 = acc5
+    # gather the stats from all processes
+    print('* Acc@1 {top1:.3f} Acc@5 {top5:.3f}'
+          .format(top1=best_acc1, top5=best_acc5))
+    return best_acc1, best_acc5
+

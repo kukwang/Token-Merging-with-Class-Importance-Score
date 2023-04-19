@@ -35,8 +35,10 @@ import utils
 import models
 from arguments import add_arguments
 from loggers import TensorboardLogger
-from engine import train_one_epoch, evaluate
+from engine import train_one_epoch, evaluate, real_evaluate
 from losses import DistillLoss
+
+import tome
 
 def main(args):
     # device setting
@@ -72,7 +74,7 @@ def main(args):
 
     # make dataloaders
     train_loader, val_loader = build_dataloader(args, train_set, val_set, num_tasks, global_rank)
-    cudnn.benchmark = True
+    
     # mixup settings
     mixup_fn = None
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
@@ -83,29 +85,73 @@ def main(args):
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.num_classes)
 
-    # create model
-    model = create_model(
-        args.model_name,
-        pretrained=bool(args.pt_dl),
-        num_classes=args.num_classes,
-        drop_rate=args.dropout,
-        drop_path_rate=args.drop_path,
-        drop_block_rate=None,
-        model_dir=args.pt_dl,
-        distillation_type=args.distillation_type
-    )
-    if args.pt_local is not None:
-        print('start loading pretrained model from local')
-        pretrained = torch.load(args.pt_local, map_location='cpu')
-        pretrained = pretrained['model']
-        utils.load_state_dict(model, pretrained)
-    print('## model has been successfully loaded')
+    if args.mymodel:
+        # create model
+        print('model implemented by me')
+        model = create_model(
+            args.model_name,
+            pretrained=bool(args.pt_dl),
+            num_classes=args.num_classes,
+            drop_rate=args.dropout,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            model_dir=args.pt_dl,
+            distillation_type=args.distillation_type
+        )
+        if args.pt_local is not None:
+            print('start loading pretrained model from local')
+            pretrained = torch.load(args.pt_local, map_location='cpu')
+            pretrained = pretrained['model']
+            utils.load_state_dict(model, pretrained)
+        print('## model has been successfully loaded')
+
+    else:
+        # create model
+        model = create_model(
+            args.model_name,
+            pretrained=bool(args.pt_dl),
+            num_classes=args.num_classes,
+            drop_rate=args.dropout,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+        )
+        if args.pt_local is not None:
+            print('start loading pretrained model from local')
+            pretrained = torch.load(args.pt_local, map_location='cpu')
+            pretrained = pretrained['model']
+            utils.load_state_dict(model, pretrained)
+        print('## model has been successfully loaded')
 
     model.to(device)
+
+    if args.tome_r:
+        print(f'tome form')
+        print(f'r: {args.tome_r}')
+
+
+        tome.patch.timm(model)
+
+        # if args.keep_rate < 1:
+        #     drop_loc = eval(args.drop_loc)
+        #     print(f'keep_rate: {args.keep_rate}')
+        #     print(f'drop_loc: {drop_loc}')
+        # if args.trade_off > 0:
+        #     print(f'tradeoff: {args.trade_off}')
+
+        # tome.patch.timm(model,
+        #                 base_keep_rate=args.keep_rate,
+        #                 drop_loc=drop_loc,
+        #                 trade_off=args.trade_off,
+        #                 )
+
+        model.r = args.tome_r
+    else:
+        print('no merge, no prune')
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     # print("Model = %s" % str(model))
+    print(f'model name: {args.model_name}')
     print('number of params:', n_parameters)
 
     # EMA (Exponential Moving Average) setting
@@ -125,7 +171,7 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
     
-    total_batch_size = args.train_batch_size * args.update_freq * utils.get_world_size()
+    total_batch_size = args.batch_size * args.update_freq * utils.get_world_size()
     num_training_steps_per_epoch = len(train_set) // total_batch_size
     print("LR = %.8f" % args.lr)
     print("Batch size = %d" % total_batch_size)
@@ -217,7 +263,7 @@ def main(args):
 
             lr_scheduler.step(epoch)
 
-            eval_stats = evaluate(val_loader, model, device)
+            eval_stats = evaluate(val_loader, model, device, args.use_amp)
             print(f"Accuracy of the network on the {len(val_set)} eval images: {eval_stats['acc1']:.1f}%")
 
             is_best = False
@@ -264,7 +310,8 @@ def main(args):
     else:
         print('Start evaluation')
         start_time = time.time()
-        eval_stats = evaluate(val_loader, model, device)
+        # _, _ = real_evaluate(val_loader, model, device, args.use_amp)
+        eval_stats = evaluate(val_loader, model, device, args.use_amp)
         print(f"Accuracy of the network on the {len(val_set)} eval images: {eval_stats['acc1']:.1f}%")
 
         log_stats = {**{f'eval_{k}': v for k, v in eval_stats.items()},

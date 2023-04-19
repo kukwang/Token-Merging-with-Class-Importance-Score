@@ -27,7 +27,7 @@ def build_dataloader(args, train_set, val_set, num_tasks, global_rank):
 
     train_loader = torch.utils.data.DataLoader(
         train_set, sampler=train_sampler,
-        batch_size=args.train_batch_size,
+        batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
@@ -36,12 +36,12 @@ def build_dataloader(args, train_set, val_set, num_tasks, global_rank):
     if val_set is not None:
         val_loader = torch.utils.data.DataLoader(
             val_set, sampler=val_sampler,
-            batch_size=args.eval_batch_size,
+            batch_size=args.batch_size,
             num_workers=args.num_workers,
             pin_memory=args.pin_mem,
             drop_last=False
         )
     else:
         val_loader = None
-        
+    
     return train_loader, val_loader

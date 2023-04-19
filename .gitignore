@@ -1,0 +1,11 @@
+*.pyc
+*.txt
+*.pth
+
+logs
+profiles
+model_structures
+imgs
+save
+
+test.py

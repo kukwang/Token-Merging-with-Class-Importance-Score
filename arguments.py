@@ -9,7 +9,7 @@ def add_arguments(parser:argparse.ArgumentParser):
                         help='device (default: cuda)')
     parser.add_argument('--seed', type=int, default=10,
                         help='random seed (default: 10)')
-    parser.add_argument('--dist_eval', type=str2bool, default=True,
+    parser.add_argument('--dist_eval', type=str2bool, default=False,
                     help='Enabling distributed evaluation')
     parser.add_argument('--world_size', type=int, default=1,
                         help='number of distributed processes (default: 1)')
@@ -154,8 +154,12 @@ def add_arguments(parser:argparse.ArgumentParser):
 
 
     # Training/Evaluation parameters
+    parser.add_argument('--finetune', default='',
+                        help='finetune from checkpoint (default: '')')
     parser.add_argument('--eval', action='store_true',
                         help='evaluation mode (default: False)')
+    parser.add_argument('--use_amp', default=False,
+                        help='use "torch.cuda.amp.autocast" at evaluation (default: False)')
     parser.add_argument('--train_ratio', type=float, default=0.0,
                         help='train/val split ratio (default: 0.0, not split)')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
@@ -164,10 +168,8 @@ def add_arguments(parser:argparse.ArgumentParser):
                         help='training epoch (default: 300)')
     parser.add_argument('--update_freq', type=int, default=1,
                         help='gradient accumulation steps (default: 1)')
-    parser.add_argument('--train_batch_size', type=int, default=128,
-                        help='batch size at training (default: 128)')
-    parser.add_argument('--eval_batch_size', type=int, default=1,
-                        help='batch size at evaluation (default: 1)')
+    parser.add_argument('--batch_size', type=int, default=128,
+                        help='batch size at evaluation (default: 128)')
     parser.add_argument('--crop_pct', type=float, default=None)
     parser.add_argument('--training_debug', type=int, default=0,
                         help='training iters at one epoch while debugging (defualt: 10)')
@@ -185,9 +187,21 @@ def add_arguments(parser:argparse.ArgumentParser):
     parser.add_argument('--distillation_tau', default=1.0, type=float,
                         help='temperature for distillation (default: 1.0)')
 
+    # personal params
+    parser.add_argument('--tome_r', type=int, default=0,
+                        help='reduce token number in ToMe (default: 0)')
+    parser.add_argument('--mymodel', action='store_true',
+                        help='use my model')
 
-    # * Finetuning params
-    parser.add_argument('--finetune', default='', help='finetune from checkpoint')
+    parser.add_argument('--drop_loc', default='(3, 6, 9)', type=str, 
+                        help='the layer indices for shrinking inattentive tokens (default: (3, 6, 9))')
+    parser.add_argument('--keep_rate', type=float, default=1.0,
+                        help='token split rate in merging layer (default: 1.0)')
+    parser.add_argument('--trade_off', type=float, default=1.0,
+                        help='trade of Evo-ViT (default: 0.5)')
 
+    parser.add_argument('--custom', action='store_true',
+                        help='use custom code')
+    
 
     return parser

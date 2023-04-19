@@ -297,14 +297,14 @@ class PatchMerging(nn.Module):
         _assert(L == H * W, "input feature has wrong size")
         _assert(H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even.")
 
-        x = x.view(B, H, W, C)
+        x = x.view(B, H, W, C)      # [B, N, C] -> [B, H, W, C]
 
-        x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C, H elem: even idxs, W elem: even idxs
-        x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C, H elem: odd idxs, W elem: even idxs
-        x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C, H elem: even idxs, W elem: odd idxs
-        x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C, H elem: odd idxs, W elem: odd idxs
-        x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
-        x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
+        x0 = x[:, 0::2, 0::2, :]    # [B, H/2, W/2, C], H elem: even idxs, W elem: even idxs
+        x1 = x[:, 1::2, 0::2, :]    # [B, H/2, W/2, C], H elem: odd idxs, W elem: even idxs
+        x2 = x[:, 0::2, 1::2, :]    # [B, H/2, W/2, C], H elem: even idxs, W elem: odd idxs
+        x3 = x[:, 1::2, 1::2, :]    # [B, H/2, W/2, C], H elem: odd idxs, W elem: odd idxs
+        x = torch.cat([x0, x1, x2, x3], -1)  # [B, H/2, W/2, 4*C]
+        x = x.view(B, -1, 4 * C)    # [B, H/2*W/2, 4*C]
 
         x = self.norm(x)
         x = self.reduction(x)
