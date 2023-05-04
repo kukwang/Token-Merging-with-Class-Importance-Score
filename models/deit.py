@@ -220,7 +220,7 @@ def deit_small_patch16_224(pretrained=False, **kwargs):
         model = _load_pretrained(model, **kwargs)
     return model
 
-@register_model
+# @register_model
 def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
     model = VisionTransformerDistilled(
         patch_size=16, embed_dim=384, depth=12, num_heads=6,

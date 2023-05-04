@@ -51,16 +51,24 @@ tome_r=13
 # # ============================================================================================================
 epochs=30
 # 2gpu finetuning
-CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 --use_env \
-main.py --model_name ${model_name} --batch_size ${batch_size} --epochs ${epochs} \
---data_path ${imagenet} --pt_dl ${pretrained_download_pth} --tome_r ${tome_r} \
---save_path ${save_path} --log_dir ${log_dir} \
---lr 2e-5 --min_lr 2e-6 --weight_decay 1e-6 --warmup_epochs 0 --mymodel \
---use_amp False --dist_eval False \
-| tee ${model_name}_myft_${epochs}_tome_r${tome_r}.txt
+model_name=deit_small_patch16_224
+log_dir=./logs/tb_logs/deit_s_tome_r13_30ep_mae
+save_path=./save/deit_s_tome_r13_30ep_mae
 
+# CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 --use_env \
+CUDA_VISIBLE_DEVICES=1 python main.py --model_name ${model_name} --batch_size ${batch_size} --epochs ${epochs} \
+--data_path ${imagenet} --pt_dl ${pretrained_download_pth} --tome_r ${tome_r} \
+--lr 2e-5 --min_lr 2e-6 --weight_decay 1e-6 --warmup_epochs 0 --mymodel \
+--use_amp True --dist_eval False \
+| tee ${model_name}_tome_r${tome_r}_${epochs}ep_mae.txt
+
+# --save_path ${save_path} --log_dir ${log_dir} \
+
+mv ${model_name}_tome_r${tome_r}_${epochs}ep_mae.txt ./logs/tb_logs/deit_s_tome_r13_30ep_mae
+
+# | tee ${model_name}_myft_${epochs}_tome_r${tome_r}.txt
+
+# --data_path ${imagenet} --pt_dl ${pretrained_download_pth} --tome_r ${tome_r} \
 # --mixup 0 --cutmix 0 --smoothing 0
 # --save_path ${save_path} --log_dir ${log_dir} 
-
-# mv ${model_name}_mytrain_${epochs}_r${tome_r}.txt ./logs
 # # ============================================================================================================

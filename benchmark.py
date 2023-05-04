@@ -100,18 +100,21 @@ def main(args):
         print(f'tome form')
         print(f'r: {args.tome_r}')
 
-        if args.keep_rate < 1:
-            drop_loc = eval(args.drop_loc)
-            print(f'keep_rate: {args.keep_rate}')
-            print(f'drop_loc: {drop_loc}')
-        if args.trade_off > 0:
-            print(f'tradeoff: {args.trade_off}')
+        tome.patch.timm(model)
 
-        tome.patch.timm(model,
-                        base_keep_rate=args.keep_rate,
-                        drop_loc=drop_loc,
-                        trade_off=args.trade_off,
-                        )
+        # if args.keep_rate < 1:
+        #     drop_loc = eval(args.drop_loc)
+        #     print(f'keep_rate: {args.keep_rate}')
+        #     print(f'drop_loc: {drop_loc}')
+        # if args.trade_off > 0:      # custom 4'
+        #     print(f'tradeoff: {args.trade_off}')
+
+        # tome.patch.timm(model,
+        #                 # base_keep_rate=args.keep_rate,
+        #                 # drop_loc=drop_loc,
+        #                 trade_off=args.trade_off,       # custom 4'
+        #                 )
+
         model.r = args.tome_r
     else:
         print('no merge, no prune')

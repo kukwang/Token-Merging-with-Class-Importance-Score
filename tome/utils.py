@@ -9,6 +9,7 @@ import time
 from typing import List, Tuple, Union
 
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 
 
@@ -110,6 +111,102 @@ def parse_r(num_layers: int, r: Union[List[int], Tuple[int, float], int]) -> Lis
     return [int(min_val + step * i) for i in range(num_layers)]
 
 # ======================================================================================================
+# ======================================================================================================
+# ======================================================================================================
+
+def get_unique_indices(
+    indices: torch.Tensor,  # picked index list, [B, N]
+    max_value: int          # max value of index, N-1
+    ) -> torch.Tensor:
+    """
+    :param indices: indices of the tokens to be sampled
+    :param max_value: maximum number of the tokens to be sampled
+    :return: unique indices of the tokens to be sampled
+    """
+    sorted_indices = indices.sort(dim=1)[0]  # sort idx, get index value, [B, N]
+
+    shift_left = F.pad(sorted_indices[:, 1:], (0, 1), value=1.0)    # shift left (cls token), [B, N]
+    unique_indices = torch.where(
+        condition=(shift_left - sorted_indices) == 0,
+        input=max_value * torch.ones_like(indices),
+        other=sorted_indices,
+    )   # get unique indices, make max val if already exists, [B, N]
+    unique_indices = unique_indices.sort(dim=1)[0]   # sort unique indices, [B, N]
+    return unique_indices   # [B, N]
+
+
+def create_ys(
+    normalized_cdf: torch.Tensor,   # [B, N]
+    n_tokens: int                   # N
+    ) -> torch.Tensor:
+    """
+    Sample uniformly from y-axis.
+    """
+
+    B = normalized_cdf.shape[0]     # B
+    # epsilon = (1 / (n_tokens - 1)) / 2
+    # get uniformely stepped point
+    ys = (torch.linspace(start=0,end=1.0,steps=n_tokens,device=normalized_cdf.device,
+                            ).unsqueeze(0).repeat(B, 1))   # [B, N]
+
+    # get start point of ys using min of normalized cdf, ignore zeros
+    ys_start = (torch.min(normalized_cdf + (normalized_cdf == 0).float() * 1e8, dim=1
+                            )[0].unsqueeze(-1).expand_as(ys)) # [B, N]
+
+    # get steps of ys
+    steps = (torch.range(0, n_tokens - 1, device=normalized_cdf.device
+                            ).unsqueeze(0).expand_as(ys_start))   # [B, N]
+
+    # get ys that uniformely increasing value from minimum val to 1
+    ys = ys_start + (((ys * (n_tokens - 1)) - ys_start * steps) / (n_tokens - 1))   # [B, N]
+
+    return ys   # [B, N]
+
+
+def inverse_transform_sampling(
+    sorted_scores: torch.Tensor,    # sorted token score, ascending, [B, N]
+    sorted_indices: torch.Tensor,   # sorted token score indics, ascending, [B, N]
+    sim: torch.Tensor,             # attention value, [B, N]
+    ):
+    """
+    Sample tokens based on their similarity
+    """
+    B, N = sim.shape   # B, N
+
+    cdf = sorted_scores.cumsum(dim=1)  # get CDF of scores (scores treated as probs), [B, N]
+    # normalized cdf, [B, N]
+    normalized_cdf = (cdf - cdf.min(dim=1)[0].unsqueeze(dim=1)) / ((cdf.max(dim=1)[0] - cdf.min(dim=1)[0]) / 1.0).unsqueeze(dim=1)
+
+    # sampled values from y-axis (unoformly increase minimum to 1)
+    ys = create_ys(normalized_cdf, N).unsqueeze(dim=2)      # [B, N, 1]
+    normalized_cdf = normalized_cdf.unsqueeze(dim=1)        # [B, 1, N]
+
+    expanded_ys = ys.expand(B, ys.shape[1], ys.shape[1])    # [B, N, N]
+
+    # get min indices of ys, if dim is not matched with cdf, add padding to the front
+    tokens_to_pick_ind = torch.abs(expanded_ys - normalized_cdf).min(dim=2)[1]  # [B, N]
+    print(f'tokens_to_pick_ind shape: {tokens_to_pick_ind.shape}')
+    # get sorted sim matrix depending on similarity
+    sim_sorted = sim.gather(
+        dim=-1,
+        index=sorted_indices,
+    )  # [B, N]
+
+    # get unique indices
+    unique_indices = get_unique_indices(indices=tokens_to_pick_ind, max_value=N-1)[:, :N-1]   # [B, N-1]
+
+    # Prune the attention matrix
+    sim = sim_sorted.gather(
+        dim=-1,
+        index=unique_indices,
+        )   # [B, N]
+
+    mask = (unique_indices != (N - 1)).unsqueeze(-1).float()  # update mask, [B, N-1, 1]
+
+    sampled = torch.nonzero(mask)     # sampled tokens, nonzero of mask, [N'', 3]
+    print(sampled.shape)
+    return sim, mask, sampled # [B, N], [B, N-1, 1], [N'', 3]
+
 # ======================================================================================================
 # ======================================================================================================
 

@@ -9,7 +9,7 @@ import math
 from typing import Callable, Tuple
 
 import torch
-
+import tome.utils as utils
 
 def do_nothing(x, mode=None):
     return x
@@ -57,7 +57,11 @@ def bipartite_soft_matching(
             scores[..., :, 0] = -math.inf
 
         node_max, node_idx = scores.max(dim=-1)     # [B, N//2 (even)], [B, N//2 (even)]
-        edge_idx = node_max.argsort(dim=-1, descending=True)[..., None] # [B, N//2 (even), 1]
+        edge_idx = node_max.argsort(dim=-1, descending=True) # [B, N//2 (even)]
+        # edge_val, edge_idx = node_max.sort(dim=-1, descending=True) # [B, N//2 (even)], [B, N//2 (even)]
+        # top_r = edge_val[:, :r]
+
+        edge_idx = edge_idx[..., None]  # [B, N//2 (even), 1]
 
         unm_idx = edge_idx[..., r:, :]  # Unmerged Tokens, [B, N//2 (even) - r, 1]
         src_idx = edge_idx[..., :r, :]  # Merged Tokens, [B, r, 1]
@@ -95,6 +99,7 @@ def bipartite_soft_matching(
         return out
 
     return merge, unmerge
+    # return merge, unmerge, top_r
 
 
 def bipartite_soft_matching_revised(
@@ -177,6 +182,7 @@ def bipartite_soft_matching_clsattn(
     cls_attn: torch.Tensor, # [B, N+1, 1]
     r: int,                 # r
     left_tokens,            # K
+    class_token: bool = True,
     distill_token: bool = False,
 ) -> Tuple[Callable, Callable]:
     """
@@ -202,7 +208,8 @@ def bipartite_soft_matching_clsattn(
         higher = metric.gather(dim=-2, index=h_idx.expand(B, -1, D))    # [B, K, C//H]
         scores = lower @ higher.transpose(-1, -2)                       # [B, N-K, K]
 
-        scores[..., 0] = -math.inf    # delete score of cls token, [B, N-K, K]
+        if class_token:
+            scores[..., 0] = -math.inf    # delete score of cls token, [B, N-K, K]
         if distill_token:
             scores[..., :, 0] = -math.inf
 
@@ -214,9 +221,9 @@ def bipartite_soft_matching_clsattn(
         src_idx = edge_idx[..., :r, :]  # Merged Tokens, [B, r, 1]
         dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx) # [B, r, 1]
 
-        # if class_token:
-        #     # Sort to ensure the class token is at the start
-        #     unm_idx = unm_idx.sort(dim=1)[0]
+        if class_token:
+            # Sort to ensure the class token is at the start
+            unm_idx = unm_idx.sort(dim=1)[0]
 
     def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
         B, N, C = x.shape
@@ -235,6 +242,214 @@ def bipartite_soft_matching_clsattn(
     return merge, h_idx
 
 
+def random_bipartite_soft_matching(
+    metric: torch.Tensor,   # [B, N+1, C//H]
+    r: int,
+    class_token: bool = True,
+    distill_token: bool = False,
+) -> Callable:
+    """
+    Applies ToMe with the two sets as (r chosen randomly, the rest).
+    Input size is [batch, tokens, channels].
+
+    This will reduce the number of tokens by r.
+    """
+    if r <= 0:
+        return do_nothing
+
+    with torch.no_grad():
+        metric_wocls = metric[:, 1:]  # remove cls token, [B, N, C//H]
+        B, N, _ = metric_wocls.shape  # B, N
+        # randomly select indices using rand and argsort function
+        rand_idx = torch.rand(B, N, 1, device=metric.device).argsort(dim=1) # [B, N+1, 1]
+
+        a_idx = rand_idx[:, :r, :]  # [B, r, 1]
+        b_idx = rand_idx[:, r:, :]  # [B, N-r, 1]
+
+        def split(x):
+            C = x.shape[-1] # C
+            a = x.gather(dim=1, index=a_idx.expand(B, r, C))        # [B, r, C]
+            b = x.gather(dim=1, index=b_idx.expand(B, N - r, C))    # [B, N-r, C]
+            return a, b
+
+        metric_wocls = metric_wocls / metric_wocls.norm(dim=-1, keepdim=True) # [B, N, C]
+        a, b = split(metric_wocls)          # [B, r, C], [B, N-r, C]
+        scores = a @ b.transpose(-1, -2)    # [B, r, N-r]
+
+        _, dst_idx = scores.max(dim=-1)     # _, [B, r]
+        dst_idx = dst_idx[..., None]        # [B, r, 1]
+
+    def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
+        x_wocls = x[:, 1:]    # without cls token, [B, N, C//H]
+        src, dst = split(x_wocls) # [B, r, C], [B, N-r, C]
+        C = src.shape[-1]   # C
+        dst = dst.scatter_reduce(-2, dst_idx.expand(B, r, C), src, reduce=mode) # [B, N-r, C]
+
+        return torch.cat((x[:, :1], dst), dim=1)  # [B, N+1-r, C]
+
+    return merge
+
+# get topk indices in sorted order, K == left_tokens, [B, K]
+def bipartite_soft_matching_sim(
+    metric: torch.Tensor,   # [B, N+1, C//H]
+    r: int,                 # r
+    class_token: bool = True,
+    distill_token: bool = False,
+) -> Tuple[Callable, Callable]:
+    """
+    Applies ToMe with a topk attn score tokens (h_idx) and other tokens (l_idx).
+    cls token is not exists in h_idx and l_idx
+
+    Extra args:
+     - class_token: Whether or not there's a class token.
+     - distill_token: Whether or not there's also a distillation token.
+
+    When enabled, the class token and distillation tokens won't get merged.
+    """
+    with torch.no_grad():
+        # split metric into two tokens using sum of cosine similarity
+        metric_wocls = metric[:, 1:]    # without cls tokenk, [B, N, C//H]
+        B, N, D = metric_wocls.shape    # B, N, C//H
+
+        alter_r = 2*r if 2*r < N else N  # r for alternating
+
+        metric_wocls = metric_wocls / metric_wocls.norm(dim=-1, keepdim=True) # [B, N, C//H]
+
+        # if class_token:
+        #     metric_wocls[:, 0] = 0    # delete impact of cls token
+        # if distill_token:
+        #     metric[..., :, 0] = 0  # delete impact of distill tokens
+        
+        cos_sim = metric_wocls @ metric_wocls.transpose(-1, -2)         # [B, N, N]
+
+        # get sum of cosine similarity with all other tokens
+        cos_sim_sum = cos_sim.sum(dim=-1)[..., None]        # [B, N, 1]
+
+        # sort by cos_sim, ascending
+        cos_sim_sorted_idx = cos_sim_sum.argsort(dim=-2, descending=True)   # [B, N, 1]
+        cos_sim_sorted_idx_higer = cos_sim_sorted_idx[:, :alter_r] # [B, alter_r, 1]
+
+        # split top k
+        a_idx = cos_sim_sorted_idx_higer[:, :alter_r:2, :]    # smaller sim, src, [B, r, 1]
+        b_idx = cos_sim_sorted_idx_higer[:, 1:alter_r:2, :]    # larger sim, dst, [B, r, 1]
+        if alter_r < N:
+            b_idx = torch.cat((b_idx, cos_sim_sorted_idx[:, alter_r:]), dim=1)  # [B, N-r, 1]
+
+        def split(x):
+            C = x.shape[-1] # C
+            a = x.gather(dim=1, index=a_idx.expand(B, -1, C))        # [B, r, C]
+            b = x.gather(dim=1, index=b_idx.expand(B, -1, C))    # [B, N-r, C]
+            return a, b     # smaller sim, larger sim
+
+        a, b = split(metric_wocls)                # [B, r, C//H], [B, N-r, C//H]
+        scores = a @ b.transpose(-1, -2)    # [B, r, N-r]
+
+        _, dst_idx = scores.max(dim=-1)     # _, [B, r]
+        dst_idx = dst_idx[..., None]        # [B, r, 1]
+
+    def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
+        x_wocls = x[:, 1:]  # without cls token, [B, N, C]
+        src, dst = split(x_wocls) # [B, r, C], [B, N-r, C]
+        C = src.shape[-1]   # C
+        dst = dst.scatter_reduce(-2, dst_idx.expand(B, -1, C), src, reduce=mode) # [B, N-r, C]
+
+        return torch.cat((x[:, :1], dst), dim=1)  # [B, N+1-r, C]
+    
+    return merge
+
+# split using cos similiartiy and sampling
+def bipartite_sampling_matching(
+    metric: torch.Tensor,   # key of the tokens, [B, N+1, C//H]
+    r: int,
+    class_token: bool = True,
+    distill_token: bool = False,
+) -> Callable:
+    """
+    Applies ToMe with the two sets as (r chosen randomly, the rest).
+    Input size is [batch, tokens, channels].
+
+    This will reduce the number of tokens by r.
+    
+    TODO: write a code that get not sampled token indices
+    """
+    if r <= 0:
+        return do_nothing
+
+    with torch.no_grad():
+        metric_wocls = metric[:, 1:]    # without token, [B, N, C//H]
+        B, N, C = metric_wocls.shape  # B, N, C//H
+
+        # get cosine similarity between key of two tokens
+        metric_wocls = metric_wocls / metric_wocls.norm(dim=-1, keepdim=True)   # [B, N, C//H]
+        cos_sim = metric_wocls @ metric_wocls.transpose(-2,-1)                  # [B, N, N]
+        cos_sim = cos_sim.mean(dim=-1)  # get mean of cosine similarity of each tokens, [B, N]
+
+        # this operation makes score into probability
+        cos_sim = cos_sim / cos_sim.sum(dim=-1, keepdim=True)  # [B, N]
+
+        # get sorted tokens and its indices
+        sorted_scores, sorted_indices = cos_sim.sort(descending=False, dim=1)    # [B, N], [B, N]
+
+        # attn, mask, sampler (only not pruned)
+        # [B, N], [B, N-1, 1], [N'', 3], N'': saved token number in all batches
+        cos_sim, mask, sampler = utils.inverse_transform_sampling(sorted_scores, sorted_indices, cos_sim)
+
+        out_mask_size = mask.sum(1).max().int()   # largest selected token number in one batch, N''
+        out_mask = mask.sum(1).argmax().int()   # largest selected token number in one batch, N''
+
+        
+        # 선택된 token들의 기존 위치를 1차원으로 변환 (batch * (batch당 token 수) + batch에서의 token 위치)
+        sampler = sampler[:, 0] * N + sampler[:, 1]                 # [N'']
+
+        sampler_input = sampler.unsqueeze(-1).expand(-1, C)         # to fit dimensions, [N'', C]
+
+        flatten_x = x.reshape(-1, C)    # flat x to fit dimension, [B*(N+1), C]
+        quit()
+        # gather selected tokens
+        x_prunned = flatten_x.gather(dim=0, index=sampler_input)    # [N'', C]
+        # gather selected tokens
+        selected_x_prunned = flatten_selected_x.gather(dim=0, index=sampler_input)  # [N'', C]
+
+        # make all zero metrix to make new x
+        out_zero_mask = torch.zeros_like(torch.randn((B*out_mask_size, C))) # [B*N', 1]
+
+        x = out_zero_mask.scatter(dim=0, index=sampler_output, src=x_prunned, reduce="add"
+        ).reshape((B, out_mask_size, C))    # update x to selected tokens, [B, N', C]
+
+        selected_x = out_zero_mask.scatter(dim=0, index=sampler_output, src=selected_x_prunned, reduce="add"
+        ).reshape((B, out_mask_size, C))    # [B, N', C]
+
+        # update mask, [B, N', 1]
+        mask = out_zero_mask[:, 0].scatter(dim=0, index=sampler_out, src=1, reduce="add").reshape(B, out_mask_size, 1)
+
+        a_idx = rand_idx[:, :r, :]  # [B, r, 1]
+        b_idx = rand_idx[:, r:, :]  # [B, N+1-r, 1]
+
+        def split(x):
+            C = x.shape[-1] # C
+            a = x.gather(dim=1, index=a_idx.expand(B, r, C))        # [B, r, C]
+            b = x.gather(dim=1, index=b_idx.expand(B, N - r, C))    # [B, N+1-r, C]
+            return a, b
+
+        x_attn = x_attn / x_attn.norm(dim=-1, keepdim=True) # [B, N+1, C]
+        a, b = split(x_attn)    # [B, r, C], [B, N+1-r, C]
+        scores = a @ b.transpose(-1, -2)    # [B, r, N+1-r]
+
+        _, dst_idx = scores.max(dim=-1)     # _, [B, r]
+        dst_idx = dst_idx[..., None]        # [B, r, 1]
+
+    def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
+        src, dst = split(x) # [B, r, C], [B, N+1-r, C]
+        C = src.shape[-1]   # C``
+        dst = dst.scatter_reduce(-2, dst_idx.expand(B, r, C), src, reduce=mode) # [B, N+1-r, C]
+
+        return dst  # [B, N+1-r, C]
+
+    return merge
+
+# ============================================================================================================
+# ============================================================================================================
+
 def merge_wavg_revised(
     merge: Callable, x: torch.Tensor, size: torch.Tensor = None
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -250,8 +465,8 @@ def merge_wavg_revised(
     return x, size
 
 
-def merge_wavg_clsattn(
-    merge: Callable, x: torch.Tensor, cls_attn: torch.Tensor, size: torch.Tensor = None
+def merge_wavg_score(
+    merge: Callable, x: torch.Tensor, score: torch.Tensor, size: torch.Tensor = None
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Applies the merge function by taking a weighted average based on token size.
@@ -259,20 +474,20 @@ def merge_wavg_clsattn(
     
     Arguments
         x: input tokens, [B, N+1, C]
-        cls_attn: attention value with class token, [B, N+1, 1]
+        score: score used in weighted sum, (e.g., attention value with class token), [B, N+1, 1]
         size: size of tokens (how many tokens are merge), [B, N+1, 1]
     """
     if size is None:
         size = torch.ones_like(x[..., 0, None]) # [B, N+1, 1]
 
     # custom 2': tome + weighted sum using attn score
-    # x = merge(x * size * cls_attn, mode="sum")  # [B, N+1-r, C]
+    # x = merge(x * size * score, mode="sum")  # [B, N+1-r, C]
     # custom 3': tome + weighted sum using attn score
-    x = merge(x * cls_attn, mode="sum")  # [B, N+1-r, C]
-    cls_attn = merge(cls_attn, mode="sum")  # [B, N+1-r, 1]
-    size = merge(size, mode="sum")    # [B, N+1-r, 1]
+    x = merge(x * score, mode="sum")  # [B, N+1-r, C]
+    score = merge(score, mode="sum")  # [B, N+1-r, 1]
+    size = merge(size, mode="sum")      # [B, N+1-r, 1]
 
-    x = x / cls_attn   # [B, N+1-r, C]
+    x = x / score   # [B, N+1-r, C]
     return x, size
 
 

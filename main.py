@@ -128,20 +128,20 @@ def main(args):
         print(f'tome form')
         print(f'r: {args.tome_r}')
 
-
+        # inference
         tome.patch.timm(model)
 
         # if args.keep_rate < 1:
         #     drop_loc = eval(args.drop_loc)
         #     print(f'keep_rate: {args.keep_rate}')
         #     print(f'drop_loc: {drop_loc}')
-        # if args.trade_off > 0:
+        # if args.trade_off > 0:      # custom 4'
         #     print(f'tradeoff: {args.trade_off}')
 
         # tome.patch.timm(model,
-        #                 base_keep_rate=args.keep_rate,
-        #                 drop_loc=drop_loc,
-        #                 trade_off=args.trade_off,
+        #                 # base_keep_rate=args.keep_rate,
+        #                 # drop_loc=drop_loc,
+        #                 trade_off=args.trade_off,   # custom 4'
         #                 )
 
         model.r = args.tome_r
@@ -272,15 +272,15 @@ def main(args):
                 max_accuracy = eval_stats["acc1"]
             print(f'Max accuracy: {max_accuracy:.2f}%')
 
-            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                        **{f'eval_{k}': v for k, v in eval_stats.items()},
-                        'epoch': epoch,
-                        'n_parameters': n_parameters}
+            # log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+            #             **{f'eval_{k}': v for k, v in eval_stats.items()},
+            #             'epoch': epoch,
+            #             'n_parameters': n_parameters}
 
-            if args.save_path and utils.is_main_process():
-                save_path = Path(args.save_path)
-                with (save_path / "log.txt").open("a") as f:
-                    f.write(json.dumps(log_stats) + "\n")
+            # if args.save_path and utils.is_main_process():
+            #     save_path = Path(args.save_path)
+            #     with (save_path / "log.txt").open("a") as f:
+            #         f.write(json.dumps(log_stats) + "\n")
 
             if args.save_path:
                 utils.save_on_master({
@@ -314,13 +314,13 @@ def main(args):
         eval_stats = evaluate(val_loader, model, device, args.use_amp)
         print(f"Accuracy of the network on the {len(val_set)} eval images: {eval_stats['acc1']:.1f}%")
 
-        log_stats = {**{f'eval_{k}': v for k, v in eval_stats.items()},
-                    'n_parameters': n_parameters}
+        # log_stats = {**{f'eval_{k}': v for k, v in eval_stats.items()},
+        #             'n_parameters': n_parameters}
             
-        if args.save_path and utils.is_main_process():
-            save_path = Path(args.save_path)
-            with (save_path / "log.txt").open("a") as f:
-                f.write(json.dumps(log_stats) + "\n")
+        # if args.save_path and utils.is_main_process():
+        #     save_path = Path(args.save_path)
+        #     with (save_path / "log.txt").open("a") as f:
+        #         f.write(json.dumps(log_stats) + "\n")
 
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
