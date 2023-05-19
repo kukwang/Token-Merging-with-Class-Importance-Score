@@ -87,6 +87,10 @@ def add_arguments(parser:argparse.ArgumentParser):
                         help='drop out ratio in embedding (default: 0.1)')
     parser.add_argument('--model_ema', action='store_true',
                         help='enable ema')
+    parser.set_defaults(model_ema=True)
+    parser.add_argument('--model-ema-decay', type=float, default=0.99996, help='')
+    parser.add_argument('--model-ema-force-cpu', action='store_true', default=False, help='')
+
     parser.add_argument('--head_dim', type=int,
                         help='dimension of the head')
     parser.add_argument('--save_path', default=None,
@@ -193,8 +197,8 @@ def add_arguments(parser:argparse.ArgumentParser):
     parser.add_argument('--mymodel', action='store_true',
                         help='use my model')
 
-    parser.add_argument('--drop_loc', default='(3, 6, 9)', type=str, 
-                        help='the layer indices for shrinking inattentive tokens (default: (3, 6, 9))')
+    parser.add_argument('--threshold', default=1000, type=int, 
+                        help='the threshold of tome -> tome with score (default: 100)')
     parser.add_argument('--keep_rate', type=float, default=1.0,
                         help='token split rate in merging layer (default: 1.0)')
     parser.add_argument('--trade_off', type=float, default=1.0,
@@ -202,6 +206,7 @@ def add_arguments(parser:argparse.ArgumentParser):
 
     parser.add_argument('--custom', action='store_true',
                         help='use custom code')
-    
+    parser.add_argument('--with_data', action='store_true',
+                        help='collect data')
 
     return parser

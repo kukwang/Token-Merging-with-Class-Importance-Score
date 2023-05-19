@@ -116,9 +116,12 @@ def main(args):
         #                 )
 
         model.r = args.tome_r
+        if args.threshold < 100:
+            model.threshold = args.threshold
     else:
         print('no merge, no prune')
 
+    print(f'batch size: {args.batch_size}')
     tome_result = tome.utils.benchmark(
         model,
         device=device,

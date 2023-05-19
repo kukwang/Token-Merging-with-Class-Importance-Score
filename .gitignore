@@ -7,5 +7,7 @@ profiles
 model_structures
 imgs
 save
+txt
 
 test.py
+xrun.sh

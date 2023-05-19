@@ -32,10 +32,11 @@ from timm.optim import create_optimizer
 from timm.utils import NativeScaler, get_state_dict, ModelEma
 
 import utils
-import models
+# import models
 from arguments import add_arguments
 from loggers import TensorboardLogger
-from engine import train_one_epoch, evaluate, real_evaluate
+# from tensorboardX import SummaryWriter
+from engine import train_one_epoch, evaluate, evaluate_with_data
 from losses import DistillLoss
 
 import tome
@@ -45,27 +46,31 @@ def main(args):
     utils.init_distributed_mode(args)
     device = torch.device(args.device)
 
-    # fix random seeds
-    print(f"random seed: {args.seed}")
-    args.local_rank = utils.get_rank()
-    torch.manual_seed(args.seed + args.local_rank)
-    torch.cuda.manual_seed(args.seed + args.local_rank)
-    torch.cuda.manual_seed_all(args.seed + args.local_rank)
-    np.random.seed(seed=args.seed + args.local_rank)
-    random.seed(args.seed + args.local_rank)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-    cudnn.benchmark = True
-
+    if args.eval:
+        # fix random seeds
+        print(f"random seed: {args.seed}")
+        args.local_rank = utils.get_rank()
+        torch.manual_seed(args.seed + args.local_rank)
+        torch.cuda.manual_seed(args.seed + args.local_rank)
+        torch.cuda.manual_seed_all(args.seed + args.local_rank)
+        np.random.seed(seed=args.seed + args.local_rank)
+        random.seed(args.seed + args.local_rank)
+        torch.backends.cudnn.deterministic = True
+        cudnn.benchmark = False
+    else:
+        cudnn.benchmark = True
+    
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
 
     # make loggers
     if global_rank == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
+        print("log_dir:", args.log_dir)
+        # writer = SummaryWriter(log_dir=args.log_dir)
         log_writer = TensorboardLogger(log_dir=args.log_dir)
     else:
+        # writer = None
         log_writer = None
 
     # make datasets
@@ -145,6 +150,8 @@ def main(args):
         #                 )
 
         model.r = args.tome_r
+        if args.threshold > -1:
+            model.threshold = args.threshold
     else:
         print('no merge, no prune')
 
@@ -157,7 +164,7 @@ def main(args):
     # EMA (Exponential Moving Average) setting
     model_ema = None
     if args.model_ema:
-        # Important to create EMA model after cuda(), and DP wrapper but before SyncBN and DDP wrapper
+        # Important to create EMA model after cuda(), DP wrapper, and AMP but before SyncBN and DDP wrapper
         model_ema = ModelEma(
             model,
             decay=args.model_ema_decay,
@@ -180,6 +187,8 @@ def main(args):
         print("Number of training examples = %d" % len(train_set))
         print("Number of training training per epoch = %d" % num_training_steps_per_epoch)
 
+    linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() / 512.0
+    args.lr = linear_scaled_lr
     # hyperparmaeters setting
     optimizer = create_optimizer(args, model_without_ddp)
     loss_scaler = NativeScaler()
@@ -254,8 +263,11 @@ def main(args):
                 optimizer=optimizer,
                 device=device,
                 epoch=epoch,
+                loss_scaler=loss_scaler,
+                max_norm=args.clip_grad,
                 model_ema=model_ema,
                 mixup_fn=mixup_fn,
+                # writer=writer,
                 log_writer=log_writer,
                 start_steps=epoch * num_training_steps_per_epoch,
                 num_training_steps_per_epoch=num_training_steps_per_epoch,
@@ -281,6 +293,8 @@ def main(args):
             #     save_path = Path(args.save_path)
             #     with (save_path / "log.txt").open("a") as f:
             #         f.write(json.dumps(log_stats) + "\n")
+                # writer.add_scalar('test_acc1', eval_stats["acc1"], epoch)
+                # writer.add_scalar('test_acc5', eval_stats["acc5"], epoch)
 
             if args.save_path:
                 utils.save_on_master({
@@ -310,8 +324,47 @@ def main(args):
     else:
         print('Start evaluation')
         start_time = time.time()
-        # _, _ = real_evaluate(val_loader, model, device, args.use_amp)
-        eval_stats = evaluate(val_loader, model, device, args.use_amp)
+        
+        if args.with_data:      # get data
+            eval_stats, data = evaluate_with_data(val_loader, model, device, args.use_amp)
+            topk_sim = data["topk_sim"]
+            topk_score_diff = data["topk_score_diff"]
+            topk_sim = torch.cat(topk_sim, 1)
+            topk_score_diff = torch.cat(topk_score_diff, 1)
+
+            std, avg = torch.std_mean(topk_sim)
+            diff_std, diff_avg = torch.std_mean(topk_score_diff)
+
+            print(f'std: {std}, avg: {avg}')
+            print(f'topk score diff, std: {diff_std}, avg: {diff_avg}')
+            
+            # topk_sim_avg = torch.Tensor(data["topk_sim_avg"]).transpose(0,1).tolist()
+            # topk_sim_max = torch.Tensor(data["topk_sim_max"]).transpose(0,1).tolist()
+            # topk_sim_min = torch.Tensor(data["topk_sim_min"]).transpose(0,1).tolist()
+
+            # topk_score_avg = torch.Tensor(data["topk_score_avg"]).transpose(0,1).tolist()
+            # topk_score_max = torch.Tensor(data["topk_score_max"]).transpose(0,1).tolist()
+            # topk_score_min = torch.Tensor(data["topk_score_min"]).transpose(0,1).tolist()
+            
+            # topk_score_diff_avg = torch.Tensor(data["topk_score_diff_avg"]).transpose(0,1).tolist()
+            # topk_score_diff_max = torch.Tensor(data["topk_score_diff_max"]).transpose(0,1).tolist()
+            # topk_score_diff_min = torch.Tensor(data["topk_score_diff_min"]).transpose(0,1).tolist()
+
+            # class_acc = torch.Tensor(data["class_acc"]).unsqueeze(0).tolist()
+
+            # utils.export_to_excel(args.save_path, topk_sim_avg, tag='topk_sim_avg')
+            # utils.export_to_excel(args.save_path, topk_sim_max, tag='topk_sim_max')
+            # utils.export_to_excel(args.save_path, topk_sim_min, tag='topk_sim_min')
+            # utils.export_to_excel(args.save_path, topk_score_avg, tag='topk_score_avg')
+            # utils.export_to_excel(args.save_path, topk_score_max, tag='topk_score_max')
+            # utils.export_to_excel(args.save_path, topk_score_min, tag='topk_score_min')
+            # utils.export_to_excel(args.save_path, topk_score_diff_avg, tag='topk_score_diff_avg')
+            # utils.export_to_excel(args.save_path, topk_score_diff_max, tag='topk_score_diff_max')
+            # utils.export_to_excel(args.save_path, topk_score_diff_min, tag='topk_score_diff_min')
+            # utils.export_to_excel(args.save_path, class_acc, tag='class_acc')
+
+        else:
+            eval_stats = evaluate(val_loader, model, device, args.use_amp)
         print(f"Accuracy of the network on the {len(val_set)} eval images: {eval_stats['acc1']:.1f}%")
 
         # log_stats = {**{f'eval_{k}': v for k, v in eval_stats.items()},

@@ -364,7 +364,11 @@ def auto_load_model(args, model, model_without_ddp, optimizer, model_ema=None):
 def export_to_excel(pth, data, tag=''):
     df = pd.DataFrame(data)
     df = (df.T)
-    df.columns = ['loss', 'val_acc']
+    # df.columns = ['loss', 'val_acc']
+    if tag == '':
+        df.columns = ['acc', 'avg_sim']
+    elif tag == 'class':
+        df.columns = ['score_diff_std', 'score_diff_avg']
 
     xlsx_path = pth + '/acc_log' + tag + '.xlsx'
 

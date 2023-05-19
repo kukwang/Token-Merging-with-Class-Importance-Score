@@ -14,6 +14,9 @@ import tome.utils as utils
 def do_nothing(x, mode=None):
     return x
 
+# ==================================================================================================
+# ============================================== tome ==============================================
+# ==================================================================================================
 
 def bipartite_soft_matching(
     metric: torch.Tensor,
@@ -49,7 +52,7 @@ def bipartite_soft_matching(
     with torch.no_grad():
         metric = metric / metric.norm(dim=-1, keepdim=True) # [B, N, C//H]
         a, b = metric[..., ::2, :], metric[..., 1::2, :]    # [B, N//2 (even), C//H], [B, N//2 (odd), C//H]
-        scores = a @ b.transpose(-1, -2)                    # [B, N//2 (even), N//2(odd)]
+        scores = a @ b.transpose(-1, -2)                    # cosine similarity, [B, N//2 (even), N//2(odd)]
 
         if class_token:
             scores[..., 0, :] = -math.inf
@@ -57,9 +60,7 @@ def bipartite_soft_matching(
             scores[..., :, 0] = -math.inf
 
         node_max, node_idx = scores.max(dim=-1)     # [B, N//2 (even)], [B, N//2 (even)]
-        edge_idx = node_max.argsort(dim=-1, descending=True) # [B, N//2 (even)]
-        # edge_val, edge_idx = node_max.sort(dim=-1, descending=True) # [B, N//2 (even)], [B, N//2 (even)]
-        # top_r = edge_val[:, :r]
+        edge_idx = node_max.argsort(dim=-1, descending=True)    # sorted similarity indices[B, N//2 (even)]
 
         edge_idx = edge_idx[..., None]  # [B, N//2 (even), 1]
 
@@ -70,6 +71,7 @@ def bipartite_soft_matching(
         if class_token:
             # Sort to ensure the class token is at the start
             unm_idx = unm_idx.sort(dim=1)[0]
+
 
     def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
         src, dst = x[..., ::2, :], x[..., 1::2, :]  # [B, N//2 (even), C], [B, N//2 (odd), C]
@@ -99,8 +101,218 @@ def bipartite_soft_matching(
         return out
 
     return merge, unmerge
-    # return merge, unmerge, top_r
 
+def merge_wavg(
+    merge: Callable, x: torch.Tensor, size: torch.Tensor = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Applies the merge function by taking a weighted average based on token size.
+    Returns the merged tensor and the new token sizes.
+    """
+    if size is None:
+        size = torch.ones_like(x[..., 0, None]) # [B, N+1, 1]
+
+    x = merge(x * size, mode="sum") # [B, N+1-r, C]
+    size = merge(size, mode="sum")  # [B, N+1-r, 1]
+
+    x = x / size    # [B, N+1-r, C]
+    return x, size
+
+def merge_source(
+    merge: Callable, x: torch.Tensor, source: torch.Tensor = None
+) -> torch.Tensor:
+    """
+    For source tracking. Source is an adjacency matrix between the initial tokens and final merged groups.
+    x is used to find out how many tokens there are in case the source is None.
+    """
+    if source is None:
+        n, t, _ = x.shape
+        source = torch.eye(t, device=x.device)[None, ...].expand(n, t, t)
+
+    source = merge(source, mode="amax")
+    return source
+
+
+# ==================================================================================================
+# ============================================ for data ============================================
+# ==================================================================================================
+
+def bipartite_soft_matching_with_data(
+    metric: torch.Tensor,
+    r: int,
+    score_: torch.Tensor,   # ATS score, [B, N+1, 1]
+    class_token: bool = False,
+    distill_token: bool = False,
+) -> Tuple[Callable, Callable]:
+    """
+    Applies ToMe with a balanced matching set (50%, 50%).
+
+    Input size is [batch, tokens, channels].
+    r indicates the number of tokens to remove (max 50% of tokens).
+
+    Extra args:
+     - class_token: Whether or not there's a class token.
+     - distill_token: Whether or not there's also a distillation token.
+
+    When enabled, the class token and distillation tokens won't get merged.
+    """
+    protected = 0
+    if class_token:
+        protected += 1
+    if distill_token:
+        protected += 1
+
+    # We can only reduce by a maximum of 50% tokens
+    _b, t, d = metric.shape
+    r = min(r, (t - protected) // 2)
+
+    if r <= 0:
+        return do_nothing, do_nothing
+
+    with torch.no_grad():
+        metric = metric / metric.norm(dim=-1, keepdim=True) # [B, N, C//H]
+        a, b = metric[..., ::2, :], metric[..., 1::2, :]    # [B, N//2 (even), C//H], [B, N//2 (odd), C//H]
+        scores = a @ b.transpose(-1, -2)                    # cosine similarity, [B, N//2 (even), N//2(odd)]
+
+        if class_token:
+            scores[..., 0, :] = -math.inf
+        if distill_token:
+            scores[..., :, 0] = -math.inf
+
+        node_max, node_idx = scores.max(dim=-1)     # [B, N//2 (even)], [B, N//2 (even)]
+        edge_val, edge_idx = node_max.sort(dim=-1, descending=True) # sorted similarity value & indices, [B, N//2 (even)], [B, N//2 (even)]
+
+        # compute average of topk similarities
+        topk_sim = edge_val[:, :r]     # topk similarities, [B, r]
+        edge_idx = edge_idx[..., None]  # [B, N//2 (even), 1]
+
+        unm_idx = edge_idx[..., r:, :]  # Unmerged Tokens, [B, N//2 (even) - r, 1]
+        src_idx = edge_idx[..., :r, :]  # Merged Tokens, [B, r, 1]
+        dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx) # [B, r, 1]
+
+        if class_token:
+            # Sort to ensure the class token is at the start
+            unm_idx = unm_idx.sort(dim=1)[0]
+
+        # compute average score difference between tokens in one pair
+        src_score_, dst_score_ = score_[..., ::2, :], score_[..., 1::2, :]
+        topk_src_score_ = src_score_.gather(dim=-2, index=src_idx)   # [B, r, 1]
+        topk_dst_score_ = dst_score_.gather(dim=-2, index=dst_idx)   # [B, r, 1]
+
+    def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
+        src, dst = x[..., ::2, :], x[..., 1::2, :]  # [B, N//2 (even), C], [B, N//2 (odd), C]
+        n, t1, c = src.shape
+        unm = src.gather(dim=-2, index=unm_idx.expand(n, t1 - r, c))    # [B, N//2 (even) - r, C]]
+        src = src.gather(dim=-2, index=src_idx.expand(n, r, c))         # [B, r, C]
+        dst = dst.scatter_reduce(-2, dst_idx.expand(n, r, c), src, reduce=mode) # [B, N//2 (odd), C]
+
+        if distill_token:
+            return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
+        else:
+            return torch.cat([unm, dst], dim=1) # [B, N - r, C]
+
+    def unmerge(x: torch.Tensor) -> torch.Tensor:
+        unm_len = unm_idx.shape[1]
+        unm, dst = x[..., :unm_len, :], x[..., unm_len:, :]
+        n, _, c = unm.shape
+
+        src = dst.gather(dim=-2, index=dst_idx.expand(n, r, c))
+
+        out = torch.zeros(n, metric.shape[1], c, device=x.device, dtype=x.dtype)
+
+        out[..., 1::2, :] = dst
+        out.scatter_(dim=-2, index=(2 * unm_idx).expand(n, unm_len, c), src=unm)
+        out.scatter_(dim=-2, index=(2 * src_idx).expand(n, r, c), src=src)
+
+        return out
+
+    return merge, unmerge, topk_sim, topk_src_score_, topk_dst_score_
+
+def bipartite_soft_matching_revised_with_data(
+    metric: torch.Tensor,   # [B, N+1, C//H] (include cls token) or [B, N, C//H] (not include cls token)
+    r: int,
+    score_ats: torch.Tensor,   # ATS score, [B, N+1, 1]
+    class_token: bool = True,
+    distill_token: bool = False,
+) -> Tuple[Callable, Callable]:
+    """
+    Applies ToMe with a balanced matching set (50%, 50%).
+
+    Input size is [batch, tokens, channels].
+    r indicates the number of tokens to remove (max 50% of tokens).
+
+    Extra args:
+     - class_token: Whether or not there's a class token.
+     - distill_token: Whether or not there's also a distillation token.
+
+    When enabled, the class token and distillation tokens won't get merged.
+    """
+    protected = 0
+    if class_token:
+        protected = 1
+    if distill_token:
+        protected += 1
+
+    # We can only reduce by a maximum of 50% tokens
+    _b, t, n = metric.shape
+    r = min(r, (t - protected) // 2)
+
+    if r <= 0:
+        return do_nothing
+
+    with torch.no_grad():
+        metric = metric / metric.norm(dim=-1, keepdim=True) # [B, N+1, C//H]
+        a, b = metric[..., ::2, :], metric[..., 1::2, :]    # [B, Ne(==(N+1)//2 (even)), C//H], [B, No(==(N+1)//2(odd)), C//H]
+        scores = a @ b.transpose(-1, -2)                    # [B, Ne, No]
+
+        if class_token:
+            scores[..., 0, :] = -math.inf       # protect cls token, [B, 0, No] = -inf
+        if distill_token:
+            scores[..., :, 0] = -math.inf
+
+        node_max, node_idx = scores.max(dim=-1)     # [B, Ne], [B, Ne]
+        edge_val, edge_idx = node_max.sort(dim=-1, descending=True) # [B, Ne, 1]
+
+        # compute average of topk similarities
+        topk_sim = edge_val[:, :r]     # topk similarities
+        topk_sim_avg = topk_sim.sum()/_b/r   # average of topk similarities
+
+        edge_idx = edge_idx[..., None]  # [B, N//2 (even), 1]
+
+        unm_idx = edge_idx[..., r:, :]  # Unmerged Tokens, [B, Ne - r, 1]
+        src_idx = edge_idx[..., :r, :]  # Merged Tokens, [B, r, 1]
+        dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx) # [B, r, 1]
+
+        if class_token:
+            # Sort to ensure the class token is at the start
+            unm_idx = unm_idx.sort(dim=1)[0]
+
+        # compute average score difference between tokens in one pair
+        src_score_ats, dst_score_ats = score_ats[..., ::2, :], score_ats[..., 1::2, :]
+        src_score_ats = src_score_ats.gather(dim=-2, index=src_idx)   # [B, r, 1]
+        dst_score_ats = dst_score_ats.gather(dim=-2, index=dst_idx)   # [B, r, 1]
+        
+        score_diff = torch.abs(src_score_ats - dst_score_ats)         # [B, r, 1]
+        # score_diff_avg = score_diff.sum()    # average of score difference
+        # score_diff_max = score_diff.max()    # max of score difference
+
+    def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
+        src, dst = x[..., ::2, :], x[..., 1::2, :]  # [B, Ne, C], [B, No, C]
+        n, t1, c = src.shape
+        unm = src.gather(dim=-2, index=unm_idx.expand(n, t1 - r, c))    # [B, Ne-r, C]]
+        src = src.gather(dim=-2, index=src_idx.expand(n, r, c))         # [B, r, C]
+        dst = dst.scatter_reduce(-2, dst_idx.expand(n, r, c), src, reduce=mode) # [B, No, C]
+
+        if distill_token:
+            return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
+        else:
+            return torch.cat([unm, dst], dim=1) # [B, N+1-r, C]
+
+    return merge, topk_sim_avg, score_diff    # merge func, avg of topk sims, avg of score diff
+
+# ==================================================================================================
+# ============================================== mine ==============================================
+# ==================================================================================================
 
 def bipartite_soft_matching_revised(
     metric: torch.Tensor,   # [B, N+1, C//H] (include cls token) or [B, N, C//H] (not include cls token)
@@ -166,15 +378,180 @@ def bipartite_soft_matching_revised(
         else:
             return torch.cat([unm, dst], dim=1) # [B, N+1-r, C]
 
-    # def merge_idx(x: torch.Tensor, mode="mean") -> torch.Tensor:
-    #     src, dst = x[..., ::2, :], x[..., 1::2, :]  # [B, Ne, C], [B, No, C]
-    #     n, t1, c = src.shape
-    #     unm = src.gather(dim=-2, index=unm_idx.expand(n, t1-r, c))    # [B, Ne-r, C]]
-
-    #     return torch.cat([unm, dst], dim=1) # [B, N-r, C]
-
-    # return merge, merge_idx
     return merge
+
+def merge_wavg_score(
+    merge: Callable,
+    x: torch.Tensor,            # [B, N+1, C]
+    score: torch.Tensor,        # [B, N+1, 1]
+    size: torch.Tensor = None,  # [B, N+1, 1]
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Applies the merge function by taking a weighted average based on token size.
+    Returns the merged tensor and the new token sizes.
+    
+    Arguments
+        x: input tokens, [B, N+1, C]
+        score: score used in weighted sum, (e.g., attention value with class token), [B, N+1, 1]
+        size: size of tokens (how many tokens are merge), [B, N+1, 1]
+    """
+    
+    if size is None:
+        size = torch.ones_like(x[..., 0, None]) # [B, N+1, 1]
+
+    x = merge(x * score, mode="sum")  # [B, N+1-r, C]
+    score = merge(score, mode="sum")  # [B, N+1-r, 1]
+    size = merge(size, mode="sum")      # [B, N+1-r, 1]
+
+    x = x / score   # [B, N+1-r, C]
+    return x, size
+
+# ==================================================================================================
+# ============================================ ablation ============================================
+# ==================================================================================================
+
+def merge_wavg_score_size(
+    merge: Callable, x: torch.Tensor, score_: torch.Tensor, size: torch.Tensor = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Applies the merge function by taking a weighted average based on token size.
+    Returns the merged tensor and the new token sizes.
+    
+    Arguments
+        x: input tokens, [B, N+1, C]
+        cls_attn: attention value with class token, [B, N+1, 1]
+        size: size of tokens (how many tokens are merge), [B, N+1, 1]
+    """
+
+    if size is None:
+        size = torch.ones_like(x[..., 0, None]) # [B, N+1, 1]
+
+    x = merge(x * score_ * size, mode="sum")     # [B, N+1-r, C]
+    cls_attn_size = merge(score_ * size, mode="sum")  # [B, N+1-r, 1]
+    size = merge(size, mode="sum")
+
+    x = x / cls_attn_size
+    return x, size
+
+def bipartite_soft_matching_revised_max_score(
+    metric: torch.Tensor,   # v, [B, N+1, C//H] (include cls token) or [B, N, C//H] (not include cls token)
+    r: int,
+    class_token: bool = True,
+    distill_token: bool = False,
+) -> Tuple[Callable, Callable]:
+    """
+    Applies ToMe with a balanced matching set (50%, 50%).
+
+    Input size is [batch, tokens, channels].
+    r indicates the number of tokens to remove (max 50% of tokens).
+
+    Extra args:
+     - class_token: Whether or not there's a class token.
+     - distill_token: Whether or not there's also a distillation token.
+
+    When enabled, the class token and distillation tokens won't get merged.
+    """
+    protected = 0
+    if class_token:
+        protected = 1
+    if distill_token:
+        protected += 1
+
+    # We can only reduce by a maximum of 50% tokens
+    t = metric.shape[1]
+    r = min(r, (t - protected) // 2)
+
+    if r <= 0:
+        return do_nothing
+
+    with torch.no_grad():
+        metric = metric / metric.norm(dim=-1, keepdim=True) # [B, N+1, C//H]
+        a, b = metric[..., ::2, :], metric[..., 1::2, :]    # [B, Ne(==(N+1)//2 (even)), C//H], [B, No(==(N+1)//2(odd)), C//H]
+        scores = a @ b.transpose(-1, -2)                    # [B, Ne, No]
+
+        if class_token:
+            scores[..., 0, :] = -math.inf       # protect cls token, [B, 0, No] = -inf
+        if distill_token:
+            scores[..., :, 0] = -math.inf
+
+        node_max, node_idx = scores.max(dim=-1)     # [B, Ne], [B, Ne]
+        edge_idx = node_max.argsort(dim=-1, descending=True)[..., None] # [B, Ne, 1]
+
+        unm_idx = edge_idx[..., r:, :]  # Unmerged Tokens, [B, Ne - r, 1]
+        src_idx = edge_idx[..., :r, :]  # Merged Tokens, [B, r, 1]
+
+        nst_idx = torch.range()
+        nst_idx = node_idx[..., None].gather(dim=-2, index=unm_idx) # [B, No - r, 1]
+        dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx) # [B, r, 1]
+
+        if class_token:
+            # Sort to ensure the class token is at the start
+            unm_idx = unm_idx.sort(dim=1)[0]
+
+    def merge(x: torch.Tensor, score: torch.Tensor = None) -> torch.Tensor:
+        src, dst = x[..., ::2, :], x[..., 1::2, :]  # [B, Ne, C], [B, No, C]
+        n, t1, c = src.shape
+        unm = src.gather(dim=-2, index=unm_idx.expand(n, t1 - r, c))    # [B, Ne-r, C]]
+        src = src.gather(dim=-2, index=src_idx.expand(n, r, c))         # [B, r, C]
+
+        if score is None:     # get size of tokens
+            dst = dst.scatter_reduce(-2, dst_idx.expand(n, r, c), src, reduce="sum")      # [B, No, C]
+
+        else:           # get merged tokens
+            nst = dst.gather(dim=-2, index=nst_idx.expand(n, -1, c))    # [B,]
+            dst = dst.gather(dim=-2, index=dst_idx.expand(n, r, c))     # [B, r, C]
+
+            mtcat = torch.cat([src[..., None], dst[..., None]], dim=-1) # [B, r, C, 2]
+            # micat = torch.cat([src_idx, dst_idx], dim=-1) # concated be merged tokens index to get max score indices, [B, r, 2]
+
+            even_score, odd_score = score[..., ::2, :], score[..., 1::2, :] # [B, Ne, 1], [B, No, 1]
+            src_score = even_score.gather(dim=-2, index=src_idx)    # [B, r, 1]
+            dst_score = odd_score.gather(dim=-2, index=dst_idx)     # [B, r, 1]
+
+            mscat = torch.cat([src_score, dst_score], dim=-1)   # [B, r, 2]
+            midx = mscat.argmax(dim=-1)[..., None]              # get even or odd, [B, r, 1]
+
+            dst = mtcat.gather(dim=-1, index=midx[..., None, :].expand(n, r, c, 1)).squeeze(-1) # [B, r, C]
+            dst = torch.cat([dst, nst], dim=1)
+
+        if distill_token:
+            return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
+        else:
+            return torch.cat([unm, dst], dim=1) # [B, N+1-r, C]
+
+
+    return merge
+
+def merge_max_score(
+    merge: Callable,
+    x: torch.Tensor,            # [B, N+1, C]
+    score: torch.Tensor,        # [B, N+1, 1]
+    size: torch.Tensor = None,  # [B, N+1, 1]
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Applies the merge function by taking a weighted average based on token size.
+    Returns the merged tensor and the new token sizes.
+    
+    Arguments
+        x: input tokens, [B, N+1, C]
+        score: score used in weighted sum, (e.g., attention value with class token), [B, N+1, 1]
+        size: size of tokens (how many tokens are merge), [B, N+1, 1]
+    """
+    
+    if size is None:
+        size = torch.ones_like(x[..., 0, None]) # [B, N+1, 1]
+
+    # custom ': tome + weighted sum using attn score
+    x = merge(x, score)  # [B, N+1-r, C]
+    size = merge(size)      # [B, N+1-r, 1]
+
+    return x, size
+
+
+# ==================================================================================================
+# ============================================ not used ============================================
+# ==================================================================================================
+
 
 # get topk indices in sorted order, K == left_tokens, [B, K]
 def bipartite_soft_matching_clsattn(
@@ -447,8 +824,6 @@ def bipartite_sampling_matching(
 
     return merge
 
-# ============================================================================================================
-# ============================================================================================================
 
 def merge_wavg_revised(
     merge: Callable, x: torch.Tensor, size: torch.Tensor = None
@@ -462,32 +837,6 @@ def merge_wavg_revised(
     size = merge(size, mode="sum")  # [B, N+1-r, 1]
 
     x = x / size    # [B, N+1-r, C]
-    return x, size
-
-
-def merge_wavg_score(
-    merge: Callable, x: torch.Tensor, score: torch.Tensor, size: torch.Tensor = None
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Applies the merge function by taking a weighted average based on token size.
-    Returns the merged tensor and the new token sizes.
-    
-    Arguments
-        x: input tokens, [B, N+1, C]
-        score: score used in weighted sum, (e.g., attention value with class token), [B, N+1, 1]
-        size: size of tokens (how many tokens are merge), [B, N+1, 1]
-    """
-    if size is None:
-        size = torch.ones_like(x[..., 0, None]) # [B, N+1, 1]
-
-    # custom 2': tome + weighted sum using attn score
-    # x = merge(x * size * score, mode="sum")  # [B, N+1-r, C]
-    # custom 3': tome + weighted sum using attn score
-    x = merge(x * score, mode="sum")  # [B, N+1-r, C]
-    score = merge(score, mode="sum")  # [B, N+1-r, 1]
-    size = merge(size, mode="sum")      # [B, N+1-r, 1]
-
-    x = x / score   # [B, N+1-r, C]
     return x, size
 
 
@@ -517,29 +866,6 @@ def merge_wavg_clsattn_evo(
     return x, cls_attn, size
 
 
-"""
-이걸로 교체하기 전에 prop attn 옵션 껐는지 확인하기
-"""
-def merge_wavg_clsattn2(
-    # merge: Callable, merge_idx: Callable, x: torch.Tensor, cls_attn: torch.Tensor, size: torch.Tensor = None
-    merge: Callable, x: torch.Tensor, cls_attn: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Applies the merge function by taking a weighted average based on token size.
-    Returns the merged tensor and the new token sizes.
-    
-    Arguments
-        x: input tokens, [B, N+1, C]
-        cls_attn: attention value with class token, [B, N+1, 1]
-    """
-
-    x = merge(x * cls_attn, mode="sum")     # [B, N+1-r, C]
-    cls_attn = merge(cls_attn, mode="sum")  # [B, N+1-r, 1]
-
-    x = x / cls_attn
-    return x
-
-
 def prune_r(
     x: torch.Tensor, r: int, cls_attn: torch.Tensor, size: torch.Tensor = None
     ): 
@@ -566,38 +892,70 @@ def prune_r(
     return x_pruned, size
 
 
-# ==================================================================================================
-# ==================================================================================================
-# ==================================================================================================
-
-def merge_wavg(
-    merge: Callable, x: torch.Tensor, size: torch.Tensor = None
-) -> Tuple[torch.Tensor, torch.Tensor]:
+def bipartite_soft_matching_revised_head(
+    metric: torch.Tensor,   # [B, N+1, C//H] (include cls token) or [B, N, C//H] (not include cls token)
+    r: int,
+    class_token: bool = True,
+    distill_token: bool = False,
+) -> Tuple[Callable, Callable]:
     """
-    Applies the merge function by taking a weighted average based on token size.
-    Returns the merged tensor and the new token sizes.
+    Applies ToMe with a balanced matching set (50%, 50%).
+
+    Input size is [batch, tokens, channels].
+    r indicates the number of tokens to remove (max 50% of tokens).
+
+    Extra args:
+     - class_token: Whether or not there's a class token.
+     - distill_token: Whether or not there's also a distillation token.
+
+    When enabled, the class token and distillation tokens won't get merged.
     """
-    if size is None:
-        size = torch.ones_like(x[..., 0, None]) # [B, N+1, 1]
+    assert len(metric.shape) == 4, "metric dimension does not matching! (not 4)"
+    protected = 0
+    if class_token:
+        protected = 1
+    if distill_token:
+        protected += 1
 
-    x = merge(x * size, mode="sum") # [B, N+1-r, C]
-    size = merge(size, mode="sum")  # [B, N+1-r, 1]
+    # We can only reduce by a maximum of 50% tokens
+    t = metric.shape[-2]           # B, H, N, C//H
+    r = min(r, (t - protected) // 2)
 
-    x = x / size    # [B, N+1-r, C]
-    return x, size
+    if r <= 0:
+        return do_nothing
 
+    with torch.no_grad():
+        metric = metric / metric.norm(dim=-1, keepdim=True) # [B, H, N+1, C//H]
+        a, b = metric[..., ::2, :], metric[..., 1::2, :]    # [B, H, Ne(==(N+1)//2 (even)), C//H], [B, H, No(==(N+1)//2(odd)), C//H]
+        head_scores = a @ b.transpose(-1, -2)   # [B, H, Ne, No]
+        scores = head_scores.mean(1)            # [B, Ne, No]
 
-def merge_source(
-    merge: Callable, x: torch.Tensor, source: torch.Tensor = None
-) -> torch.Tensor:
-    """
-    For source tracking. Source is an adjacency matrix between the initial tokens and final merged groups.
-    x is used to find out how many tokens there are in case the source is None.
-    """
-    if source is None:
-        n, t, _ = x.shape
-        source = torch.eye(t, device=x.device)[None, ...].expand(n, t, t)
+        if class_token:
+            scores[..., 0, :] = -math.inf       # protect cls token, [B, 0, No] = -inf
+        if distill_token:
+            scores[..., :, 0] = -math.inf
 
-    source = merge(source, mode="amax")
-    return source
+        node_max, node_idx = scores.max(dim=-1)     # [B, Ne], [B, Ne]
+        edge_idx = node_max.argsort(dim=-1, descending=True)[..., None] # [B, Ne, 1]
 
+        unm_idx = edge_idx[..., r:, :]  # Unmerged Tokens, [B, Ne - r, 1]
+        src_idx = edge_idx[..., :r, :]  # Merged Tokens, [B, r, 1]
+        dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx) # [B, r, 1]
+
+        if class_token:
+            # Sort to ensure the class token is at the start
+            unm_idx = unm_idx.sort(dim=1)[0]
+
+    def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
+        src, dst = x[..., ::2, :], x[..., 1::2, :]  # [B, Ne, C], [B, No, C]
+        n, t1, c = src.shape
+        unm = src.gather(dim=-2, index=unm_idx.expand(n, t1 - r, c))    # [B, Ne-r, C]]
+        src = src.gather(dim=-2, index=src_idx.expand(n, r, c))         # [B, r, C]
+        dst = dst.scatter_reduce(-2, dst_idx.expand(n, r, c), src, reduce=mode) # [B, No, C]
+
+        if distill_token:
+            return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
+        else:
+            return torch.cat([unm, dst], dim=1) # [B, N+1-r, C]
+
+    return merge

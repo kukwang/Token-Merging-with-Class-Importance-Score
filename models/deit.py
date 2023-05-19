@@ -188,7 +188,7 @@ def _load_pretrained(model: VisionTransformer, **kwargs):
     print('pretrained model loaded')
     return model
 
-@register_model
+# @register_model
 def deit_tiny_patch16_224(pretrained=False, **kwargs):
     model = VisionTransformer(
         patch_size=16, embed_dim=192, depth=12, num_heads=3,
@@ -210,7 +210,7 @@ def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
         model = _load_pretrained(model, **kwargs)
     return model
 
-@register_model
+# @register_model
 def deit_small_patch16_224(pretrained=False, **kwargs):
     model = VisionTransformer(
         patch_size=16, embed_dim=384, depth=12, num_heads=6,
@@ -220,7 +220,7 @@ def deit_small_patch16_224(pretrained=False, **kwargs):
         model = _load_pretrained(model, **kwargs)
     return model
 
-# @register_model
+@register_model
 def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
     model = VisionTransformerDistilled(
         patch_size=16, embed_dim=384, depth=12, num_heads=6,
@@ -232,7 +232,7 @@ def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
         model = _load_pretrained(model, **kwargs)
     return model
 
-@register_model
+# @register_model
 def deit_base_patch16_224(pretrained=False, **kwargs):
     model = VisionTransformer(
         patch_size=16, embed_dim=768, depth=12, num_heads=12,

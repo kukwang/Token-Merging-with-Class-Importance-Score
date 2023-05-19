@@ -12,12 +12,12 @@ import math
 from typing import Tuple
 
 import torch
-# from timm.models.vision_transformer import Attention, Block, VisionTransformer
-from models.vit import Attention, Block, VisionTransformer
+from timm.models.vision_transformer import Attention, Block, VisionTransformer
+# from models.vit import Attention, Block, VisionTransformer    # --mymodel
 
 import tome
 import utils
-from tome.merge import bipartite_soft_matching, bipartite_soft_matching_revised, merge_wavg, merge_source
+from tome.merge import bipartite_soft_matching, bipartite_soft_matching_revised, bipartite_soft_matching_revised_head, merge_wavg, merge_wavg_score, merge_source
 from tome.utils import parse_r
 
 # import torch.autograd.profiler as profiler
@@ -39,15 +39,23 @@ class ToMeBlock(Block):
         # Note: this is copied from timm.models.vision_transformer.Block with modifications.
         token_size = self._tome_info["size"] if self._tome_info["prop_attn"] else None  # [B, N+1, 1]
 
+        # if self.block_num < self._tome_info["threshold"]: # scheduling
+        #     is_tome = True
+        #     x_attn, key = self.attn(self.norm1(x), token_size, is_tome)
+        # else:
+        #     is_tome = False
+        #     x_attn, cls_attn, key, val = self.attn(self.norm1(x), token_size, is_tome)
 
         # # attention part
         # with profiler.record_function("attn"):
         # keep_rate = self.keep_rate
         # x_attn, metric = self.attn(self.norm1(x), token_size)   # tome, [B, N+1, C]
-        x_attn, cls_attn, key, val = self.attn(self.norm1(x), token_size) # mine, tome + ATS weighted sum
+        # x_attn, cls_attn, key = self.attn(self.norm1(x), token_size) # mine, tome + cls weighted sum || to get data
+        # x_attn, attn, key = self.attn(self.norm1(x), token_size) # mine, tome + attn_sum weighted sum || to get data
+        x_attn, cls_attn, key, val = self.attn(self.norm1(x), token_size) # mine, tome + ATS weighted sum || to get data
+
         # x_attn, cls_attn, metric = self.attn(self.norm1(x), token_size) # custom 3'
         # x_attn, cls_attn, metric = self.attn(self.norm1(x), token_size, keep_rate)
-        # x_attn, cls_attn, metric = self.attn(self.norm1(x), token_size, self._tome_info["cls_attn"]) # custom 4'
         # get reduce token number
         r = self._tome_info["r"]
         x = x + self._drop_path1(x_attn)    # [B, N+1, C]
@@ -58,7 +66,6 @@ class ToMeBlock(Block):
             """
             tome
             """
-            # # merge, _, top_r = bipartite_soft_matching(
             # merge, _ = bipartite_soft_matching(
             #     metric,
             #     r,
@@ -74,10 +81,66 @@ class ToMeBlock(Block):
             # x, self._tome_info["size"] = merge_wavg(merge, x, token_size)
             # ============================================================================================================
             """
-            mine: tome + weighted sum using significance score (ATS)
+            tome, to get data
             """
-            val_norm = torch.linalg.norm(val, ord=2, dim=2) # [B, N+1]
-            score_ = cls_attn * val_norm[..., None] # calculate score used in weighted sum, [B, N+1, 1]
+            # val_norm = torch.linalg.norm(val, ord=2, dim=2) # [B, N+1]
+            # score_ = cls_attn * val_norm[..., None] # calculate score used in weighted sum, [B, N+1, 1]
+
+            # merge, _, topk_sim, topk_src_score, topk_dst_score= tome.merge.bipartite_soft_matching_with_data(
+            #     key,
+            #     r,
+            #     score_,
+            #     class_token=self._tome_info["class_token"],
+            #     distill_token=self._tome_info["distill_token"],
+            # )
+
+            # if self._tome_info["trace_source"]:
+            #     self._tome_info["source"] = merge_source(
+            #         merge, x, self._tome_info["source"]
+            #     )
+
+            # x, self._tome_info["size"] = merge_wavg(merge, x, token_size)
+
+            # topk_sim, topk_src_score, topk_dst_score = topk_sim.cpu(), topk_src_score.cpu(), topk_dst_score.cpu()
+            # topk_sim_max = topk_sim.max()
+            # topk_sim_min = topk_sim.min()
+
+            # topk_score = torch.cat([topk_src_score, topk_dst_score])
+
+            # topk_score_max = topk_score.max()
+            # topk_score_min = topk_score.min()
+
+            # topk_score_diff = torch.abs(topk_src_score - topk_dst_score)
+            # topk_score_diff_max = topk_score_diff.max()
+            # topk_score_diff_min = topk_score_diff.min()
+            
+            # self._tome_data["topk_sim"] = topk_sim  # vector
+            # self._tome_data["topk_score_diff"] = topk_score_diff  # vector
+
+            # b, n = topk_sim.shape
+            # self._tome_data["topk_sim_avg"] = topk_sim.sum() / (b*n)    # scalar
+            # # self._tome_data["topk_sim_max"] = torch.max(topk_sim_max, self._tome_data["topk_sim_max"])[0]   # scalar
+            # # self._tome_data["topk_sim_min"] = torch.min(topk_sim_min, self._tome_data["topk_sim_min"])[0]   # scalar
+
+            # # b, n, _ = topk_score.shape
+            # # self._tome_data["topk_score_avg"] = topk_score.sum() / (b*n)    # scalar
+            # # self._tome_data["topk_score_max"] = torch.max(topk_score_max, self._tome_data["topk_score_max"])[0] # scalar
+            # # self._tome_data["topk_score_min"] = torch.min(topk_score_min, self._tome_data["topk_score_min"])[0] # scalar
+
+            # # b, n, _ = topk_score_diff.shape
+            # # self._tome_data["topk_score_diff_avg"] = topk_score_diff.sum() / (b*n) # scalar
+            # # self._tome_data["topk_score_diff_max"] = torch.max(topk_score_diff_max, self._tome_data["topk_score_diff_max"])[0]   # scalar
+            # # self._tome_data["topk_score_diff_min"] = torch.min(topk_score_diff_min, self._tome_data["topk_score_diff_min"])[0]   # scalar
+
+
+            # # self._tome_data["topk_score_diff"] = topk_score_diff_max    # add data
+            # ============================================================================================================
+            """
+            mine : tome + weighted sum using significance score (ATS)
+            """
+            with torch.no_grad():
+                val_norm = torch.linalg.norm(val, ord=2, dim=2) # [B, N+1]
+                score_ = cls_attn * val_norm[..., None] # calculate score used in weighted sum, [B, N+1, 1]
 
             merge = bipartite_soft_matching_revised(
                 key,
@@ -86,8 +149,85 @@ class ToMeBlock(Block):
                 self._tome_info["distill_token"],
             )
 
-            x, self._tome_info["size"] = tome.merge.merge_wavg_score(merge, x, score_, token_size)    # [B, K, C], [B, K, 1] 
+            x, self._tome_info["size"] = merge_wavg_score(merge, x, score_, token_size)    # [B, K, C], [B, K, 1] 
             # ============================================================================================================
+            """
+            ablation : tome + weighted sum using score, size
+            """
+            # with torch.no_grad():
+            #     val_norm = torch.linalg.norm(val, ord=2, dim=2) # [B, N+1]
+            #     score_ = cls_attn * val_norm[..., None] # calculate score used in weighted sum, [B, N+1, 1]
+
+            # merge = bipartite_soft_matching_revised(
+            #     key,
+            #     r,
+            #     self._tome_info["class_token"],
+            #     self._tome_info["distill_token"],
+            # )
+
+            # x, self._tome_info["size"] = tome.merge.merge_wavg_score_size(merge, x, score_, token_size)    # [B, K, C], [B, K, 1] 
+            # # x, self._tome_info["size"] = merge_wavg_score(merge, x, attn, token_size)    # [B, K, C], [B, K, 1] 
+            # ============================================================================================================
+            """
+            mine : tome + weighted sum using attn score (cls attn)
+            """
+            # merge = bipartite_soft_matching_revised(
+            #     key,
+            #     r,
+            #     self._tome_info["class_token"],
+            #     self._tome_info["distill_token"],
+            # )
+
+            # x, self._tome_info["size"] = merge_wavg_score(merge, x, cls_attn, token_size)    # [B, K, C], [B, K, 1] 
+            # ============================================================================================================
+            """
+            ablation : tome + max using significance score (ATS)
+            """
+            # with torch.no_grad():
+            #     val_norm = torch.linalg.norm(val, ord=2, dim=2) # [B, N+1]
+            #     score_ = cls_attn * val_norm[..., None] # calculate score used in weighted sum, [B, N+1, 1]
+
+            # merge = tome.merge.bipartite_soft_matching_revised_max_score(
+            #     key,
+            #     r,
+            #     self._tome_info["class_token"],
+            #     self._tome_info["distill_token"],
+            # )
+
+            # x, self._tome_info["size"] = tome.merge.merge_max_score(merge, x, score_, token_size)    # [B, K, C], [B, K, 1]
+            # ============================================================================================================
+            """
+            mine, scheduling : tome + weighted sum using significance score (ATS)
+            """
+            # if is_tome: # block cnt < threshold
+            #     merge, _ = bipartite_soft_matching(
+            #         key,
+            #         r,
+            #         class_token=self._tome_info["class_token"],
+            #         distill_token=self._tome_info["distill_token"],
+            #     )
+
+            #     # if self._tome_info["trace_source"]:
+            #     #     self._tome_info["source"] = merge_source(
+            #     #         merge, x, self._tome_info["source"]
+            #     #     )
+
+            #     x, self._tome_info["size"] = merge_wavg(merge, x, token_size)
+
+            # else:   # block cnt >= threshold
+            #     val_norm = torch.linalg.norm(val, ord=2, dim=2) # [B, N+1]
+            #     score_ = cls_attn * val_norm[..., None] # calculate score used in weighted sum, [B, N+1, 1]
+
+            #     merge = bipartite_soft_matching_revised(
+            #         key,
+            #         r,
+            #         self._tome_info["class_token"],
+            #         self._tome_info["distill_token"],
+            #     )
+
+            #     x, self._tome_info["size"] = merge_wavg_score(merge, x, score_, token_size)    # [B, K, C], [B, K, 1] 
+            # ============================================================================================================
+
             """
             custom 4: split and prune & merge
             """
@@ -177,20 +317,6 @@ class ToMeBlock(Block):
             # x, self._tome_info["size"] = tome.merge.merge_wavg_score(merge, x, score_, token_size)    # [B, K, C], [B, K, 1] 
             # ============================================================================================================
             """
-            custom 4': tome + global attention evolution (Evo-ViT)
-            """
-            # merge = bipartite_soft_matching_revised(
-            #     metric,
-            #     r,
-            #     self._tome_info["class_token"],
-            #     self._tome_info["distill_token"],
-            # )
-
-            # # merge tokens and cls_attn
-            # # return tokens, cls_attn and size, ([B, K, C], [B, K, 1], [B, K, 1])
-            # x, self._tome_info["cls_attn"], self._tome_info["size"] = merge_wavg_clsattn_evo(merge, x, cls_attn, self._tome_info["size"]) 
-            # ============================================================================================================
-            """
             custom 12'~16': split by processed cosine similarity (sum, mean)
             """
             # merge = tome.merge.bipartite_soft_matching_sim(
@@ -250,8 +376,6 @@ class ToMeBlock(Block):
             #     # # weight average
             #     # attn_x, attn_size = merge_wavg_score(merge_attn, attn_x, attn_cls_attn, attn_size)           # [B, K, C], [B, K, 1] 
             #     # inattn_x, inattn_size = merge_wavg_score(merge_inattn, inattn_x, inattn_cls_attn, inattn_size) # [B, N-K, C], [B, N-K, 1]
-            #     inattn_x, inattn_cls_attn, inattn_size = merge_wavg_clsattn_evo(
-            #         merge_inattn, inattn_x, inattn_cls_attn, inattn_size) # custom 4'
                 
             #     # concat attn, inattn tokens and its sizes
             #     x = torch.cat([x[:,0,None,:], attn_x, inattn_x], dim=1) # [B, N, C]
@@ -267,8 +391,6 @@ class ToMeBlock(Block):
 
             #     # custom 3': tome + weighted sum using attn score
             #     # x, self._tome_info["size"] = merge_wavg_score(merge, x, cls_attn, self._tome_info["size"])    # [B, K, C], [B, K, 1] 
-            #     x, self._tome_info["cls_attn"], self._tome_info["size"] = merge_wavg_clsattn_evo(
-            #         merge, x, cls_attn, self._tome_info["size"]) # custom 4'
             # ============================================================================================================
 
         x = x + self._drop_path2(self.mlp(self.norm2(x)))
@@ -283,9 +405,9 @@ class ToMeAttention(Attention):
     """
 
     def forward(
-        self, x: torch.Tensor, size: torch.Tensor = None    # tome
+        self, x: torch.Tensor, size: torch.Tensor = None    # tome, mine
+        # self, x: torch.Tensor, size: torch.Tensor = None, is_tome: bool = True,    # scheduling
         # self, x: torch.Tensor, size: torch.Tensor = None, keep_rate: float = 1.0,
-        # self, x: torch.Tensor, size: torch.Tensor = None, prev_cls_attn: torch.Tensor = None,    # custom 4', prev_cls_attn: [B, H, N]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Note: this is copied from timm.models.vision_transformer.Attention with modifications.
         B, N, C = x.shape   # B, N+1, C
@@ -306,29 +428,34 @@ class ToMeAttention(Attention):
         attn = self.attn_drop(attn_softmax)     # [B, H, N+1, N+1]
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, C) # [B, N+1, C]
-        x = self.proj(x)
+        x = self.proj(x)    # [B, N+1, C]
         x = self.proj_drop(x)
 
-        # if this block process pruning, get attn score with cls token 
-        # if keep_rate < 1:
-        # if True:    # custom 3': tome + weigthed sum
+        # return x, k.mean(1) # tome, [B, N+1, C], [B, N+1, D]
+
+        # mine || to get data
+        # attn = attn.mean(-1)[..., None]  # [B, H, N+1, 1]
+        # return x, attn.mean(1), k.mean(1)    # tome + cls_attn, [B, N+1, C], [B, N+1, 1], [B, N+1, D]
         cls_attn = attn[:, :, 0]                    # attn of cls token, [B, H, N+1]
         cls_attn = cls_attn.mean(dim=1)[..., None]  # mean over head, [B, N+1, 1]
-        # return x, cls_attn, k.mean(1)
+        # return x, cls_attn, k.mean(1)    # tome + cls_attn, [B, N+1, C], [B, N+1, 1], [B, N+1, D]
         return x, cls_attn, k.mean(1), v.mean(1)    # mine, [B, N+1, C], [B, N+1, 1], [B, N+1, D], [B, N+1, D]
 
-        # # custom 4': tome + weighted sum + global attn evo (Evo-ViT)
-        # if True:
-        #     self.trade_off = 0.5
-        #     cls_attn = attn[:, :, 0]                    # attn of cls token, [B, H, N+1]
-        #     cls_attn = cls_attn.sum(dim=1)[..., None]   # sum over head, [B, N+1, 1]
-        #     if prev_cls_attn is not None:
-        #         cls_attn = (1-self.trade_off)*prev_cls_attn + self.trade_off*cls_attn   # global attention evolution [B, N+1, 1]
-        #     return x, cls_attn, k.mean(1)   # [B, N+1, C], [B, N+1, 1], [B, N+1, N+1]
+        if is_tome: # scheduling
+            return x, k.mean(1) # [B, N+1, C], [B, N+1, D]
+
+        else:
+            # if this block process pruning, get attn score with cls token 
+            # if keep_rate < 1:
+            # if True:    # custom 3': tome + weigthed sum
+            cls_attn = attn[:, :, 0]                    # attn of cls token, [B, H, N+1]
+            cls_attn = cls_attn.mean(dim=1)[..., None]  # mean over head, [B, N+1, 1]
+            # return x, cls_attn, k.mean(1)
+            return x, cls_attn, k.mean(1), v.mean(1)    # mine, [B, N+1, C], [B, N+1, 1], [B, N+1, D], [B, N+1, D]
+            # return x, cls_attn, k, v.mean(1)    # mine, headwise, [B, N+1, C], [B, N+1, 1], [B, H, N+1, D], [B, N+1, D]
 
         # Return k as well here
         # return x, None, k.mean(1)
-        return x, k.mean(1) # tome, [B, N+1, C], [B, N+1, D]
 
 
 def make_tome_class(transformer_class):
@@ -343,15 +470,31 @@ def make_tome_class(transformer_class):
             self._tome_info["size"] = None
             self._tome_info["source"] = None
 
-            self._tome_info["cls_attn"] = None  # custom 4'
+            # self._tome_info["threshold"] = self.threshold
 
+            for block in self.blocks:
+                block._tome_data = {
+                "topk_sim": None,
+                "topk_sim_avg": 0,
+                "topk_sim_max": 0,
+                "topk_sim_min": 0,
+
+                "topk_score_avg": 0,
+                "topk_score_max": 0,
+                "topk_score_min": 0,
+
+                "topk_score_diff": None,
+                "topk_score_diff_avg": 0,
+                "topk_score_diff_max": 0,
+                "topk_score_diff_min": 0,
+                }    # to get data
             return super().forward(*args, **kwdargs)
 
     return ToMeVisionTransformer
 
 
 def apply_patch(
-    model: VisionTransformer, trace_source: bool = False, prop_attn: bool = True, # tome
+    model: VisionTransformer, trace_source: bool = False, prop_attn: bool = True, # tome, mine
     # model: VisionTransformer, trace_source: bool = False, prop_attn: bool = True, trade_off: float = 0.5, # c4'
     # model: VisionTransformer, trace_source: bool = False, prop_attn: bool = True, base_keep_rate: float = 1.0, drop_loc: tuple = None,
     # model: VisionTransformer, trace_source: bool = False, prop_attn: bool = True, base_keep_rate: float = 1.0, drop_loc: tuple = None,
@@ -371,6 +514,7 @@ def apply_patch(
     model.__class__ = ToMeVisionTransformer
     # model.keep_rate = 0.0
     model.r = 0
+    # model.threshold = -1      # scheduling
 
     # keep_rate = [1] * 12    # only deit-ti and deit-s!!!
     # if drop_loc is not None:
@@ -385,26 +529,23 @@ def apply_patch(
         "prop_attn": prop_attn,
         "class_token": model.cls_token is not None,
         "distill_token": False,
-    }
 
-    # # custom 4'
-    # if trade_off < 1:
-    #     model._tome_info["cls_attn"] = None
+        # "threshold": model.threshold,
+    }
 
     if hasattr(model, "dist_token") and model.dist_token is not None:
         model._tome_info["distill_token"] = True
 
-    # block_cnt = 0
+    block_cnt = 0
     # merge_flg = False
     for module in model.modules():
         if isinstance(module, Block):
             module.__class__ = ToMeBlock
             module._tome_info = model._tome_info
-            # module.block_num = block_cnt
+            module.block_num = block_cnt
             # module.keep_rate = keep_rate[block_cnt]
-            # block_cnt += 1
+            block_cnt += 1
             # module.merge_flg = merge_flg
             # merge_flg = not merge_flg
         elif isinstance(module, Attention):
             module.__class__ = ToMeAttention
-            # module.trade_off = trade_off      # custom 4'

@@ -28,14 +28,15 @@ lvvit_tiny_224=None
 regnety_160=None
 
 # parameters
-pretrained_download_pth=/home/${pth_diff}/kwangsoo/paper_codes/pretrained
-batch_size=256
+pretrained_download_pth=/home/${pth_diff}/kwangsoo/paper_codes/pretrained/baseline
+batch_size=512
+epochs=30
 
-log_dir=./logs/tb_logs
-save_path=./save/test
+log_dir=./logs/tb_logs/deit_s_mine_r13_30ep
+save_path=./save/test/deit_s_mine_r13_30ep
 
 # pretrained_local_pth=${deit_small_patch16_224}
-model_name=deit_tiny_patch16_224
+model_name=deit_small_patch16_224
 
 tome_r=13
 
@@ -50,21 +51,18 @@ tome_r=13
 
 # # ============================================================================================================
 epochs=30
-# 2gpu finetuning
-model_name=deit_small_patch16_224
-log_dir=./logs/tb_logs/deit_s_tome_r13_30ep_mae
-save_path=./save/deit_s_tome_r13_30ep_mae
+# 1gpu finetuning
 
-# CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 --use_env \
 CUDA_VISIBLE_DEVICES=1 python main.py --model_name ${model_name} --batch_size ${batch_size} --epochs ${epochs} \
 --data_path ${imagenet} --pt_dl ${pretrained_download_pth} --tome_r ${tome_r} \
---lr 2e-5 --min_lr 2e-6 --weight_decay 1e-6 --warmup_epochs 0 --mymodel \
+--lr 2e-5 --min_lr 2e-6 --weight_decay 1e-6 --warmup_epochs 0 \
+--save_path ${save_path} --log_dir ${log_dir} \
 --use_amp True --dist_eval False \
-| tee ${model_name}_tome_r${tome_r}_${epochs}ep_mae.txt
+| tee ${model_name}_mine_r${tome_r}_${epochs}ep.txt
 
-# --save_path ${save_path} --log_dir ${log_dir} \
+# CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 --use_env \
 
-mv ${model_name}_tome_r${tome_r}_${epochs}ep_mae.txt ./logs/tb_logs/deit_s_tome_r13_30ep_mae
+mv ${model_name}_mine_r${tome_r}_${epochs}ep.txt ./logs/tb_logs/deit_s_mine_r13_30ep
 
 # | tee ${model_name}_myft_${epochs}_tome_r${tome_r}.txt
 

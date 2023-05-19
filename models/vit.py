@@ -355,6 +355,41 @@ class VisionTransformer(nn.Module):
         x = self.norm(x)
         return x
 
+        # to get data, annotate above one lines
+        layer_data = {
+                "topk_sim": [],
+                "topk_sim_avg": [],
+                "topk_sim_max": [],
+                "topk_sim_min": [],
+
+                "topk_score_avg": [],
+                "topk_score_max": [],
+                "topk_score_min": [],
+
+                "topk_score_diff": [],
+                "topk_score_diff_avg": [],
+                "topk_score_diff_max": [],
+                "topk_score_diff_min": [],
+
+            }
+
+        for tr in self.blocks:
+            layer_data["topk_sim"].append(tr._tome_data["topk_sim"])
+            # layer_data["topk_sim_avg"].append(float(tr._tome_data["topk_sim_avg"]))
+            # layer_data["topk_sim_max"].append(float(tr._tome_data["topk_sim_max"]))
+            # layer_data["topk_sim_min"].append(float(tr._tome_data["topk_sim_min"]))
+
+            # layer_data["topk_score_avg"].append(float(tr._tome_data["topk_score_avg"]))
+            # layer_data["topk_score_max"].append(float(tr._tome_data["topk_score_max"]))
+            # layer_data["topk_score_min"].append(float(tr._tome_data["topk_score_min"]))
+
+            layer_data["topk_score_diff"].append(tr._tome_data["topk_score_diff"])
+            # layer_data["topk_score_diff_avg"].append(float(tr._tome_data["topk_score_diff_avg"]))
+            # layer_data["topk_score_diff_max"].append(float(tr._tome_data["topk_score_diff_max"]))
+            # layer_data["topk_score_diff_min"].append(float(tr._tome_data["topk_score_diff_min"]))
+
+        return x, layer_data
+
     def forward_head(self, x, pre_logits: bool = False):
         if self.global_pool:
             x = x[:, self.num_prefix_tokens:].mean(dim=1) if self.global_pool == 'avg' else x[:, 0]
@@ -365,6 +400,11 @@ class VisionTransformer(nn.Module):
         x = self.forward_features(x)
         x = self.forward_head(x)
         return x 
+
+        # to get data, annotate above three lines
+        x, layer_data = self.forward_features(x)
+        x = self.forward_head(x)
+        return x, layer_data 
 
 # ================================================================================================================
 # ViT cfgs
