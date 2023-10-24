@@ -1,6 +1,7 @@
 *.pyc
 *.txt
 *.pth
+*.sh
 
 logs
 profiles
@@ -8,7 +9,3 @@ model_structures
 imgs
 save
 txt
-
-test.py
-run.sh
-xrun.sh
