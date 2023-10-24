@@ -15,7 +15,6 @@ from timm.utils import accuracy, ModelEma
 
 from losses import DistillLoss
 import utils
-import pdb
 import warnings
 import loggers
 from loggers import TensorboardLogger
@@ -42,7 +41,7 @@ def train_one_epoch(args, model: torch.nn.Module, criterion,
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 200
 
-    it_ = epoch * len(data_loader)
+    # it_ = epoch * len(data_loader)
     
     optimizer.zero_grad()
 
@@ -55,7 +54,7 @@ def train_one_epoch(args, model: torch.nn.Module, criterion,
             if data_iter_step > args.training_debug:
                 return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-        it = start_steps + step  # global training iteration
+        # it = start_steps + step  # global training iteration
         # # Update LR & WD for the first acc
         # if lr_schedule_values is not None or wd_schedule_values is not None and data_iter_step % args.update_freq == 0:
         #     for i, param_group in enumerate(optimizer.param_groups):
@@ -181,84 +180,3 @@ def evaluate(data_loader, model, device, use_amp):
           .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-
-@torch.no_grad()
-def evaluate_with_data(data_loader, model, device, use_amp):    # to get data
-    criterion = torch.nn.CrossEntropyLoss()
-
-    class_data = {
-            "topk_sim": [],
-            "topk_sim_avg": [],
-            "topk_sim_max": [],
-            "topk_sim_min": [],
-
-            "topk_score_avg": [],
-            "topk_score_max": [],
-            "topk_score_min": [],
-
-            "topk_score_diff": [],
-            "topk_score_diff_avg": [],
-            "topk_score_diff_max": [],
-            "topk_score_diff_min": [],
-            }
-
-    class_acc = []
-
-    metric_logger = loggers.MetricLogger(delimiter="  ")
-    header = 'Test:'
-
-    # switch to evaluation mode
-    model.eval()
-
-    # i = 0
-    for images, targets in metric_logger.log_every(data_loader, 10, header):
-        # if i != 685:
-        #     i += 1
-        #     continue
-        images = images.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
-        # compute output
-        if use_amp:
-            with torch.cuda.amp.autocast():
-                output, layer_data = model(images)
-                loss = criterion(output, targets)
-        else:
-            output, layer_data = model(images)
-            loss = criterion(output, targets)
-
-        acc1, acc5 = accuracy(output, targets, topk=(1, 5))
-
-        layer_data["topk_sim"] = torch.cat(layer_data["topk_sim"], 1)
-        layer_data["topk_score_diff"] = torch.cat(layer_data["topk_score_diff"], 1)
-
-        class_data["topk_sim"].append(layer_data["topk_sim"])
-        # class_data["topk_sim_avg"].append(layer_data["topk_sim_avg"])
-        # class_data["topk_sim_max"].append(layer_data["topk_sim_max"])
-        # class_data["topk_sim_min"].append(layer_data["topk_sim_min"])
-
-        # class_data["topk_score_avg"].append(layer_data["topk_score_avg"])
-        # class_data["topk_score_max"].append(layer_data["topk_score_max"])
-        # class_data["topk_score_min"].append(layer_data["topk_score_min"])
-
-        class_data["topk_score_diff"].append(layer_data["topk_score_diff"])
-        # class_data["topk_score_diff_avg"].append(layer_data["topk_score_diff_avg"])
-        # class_data["topk_score_diff_max"].append(layer_data["topk_score_diff_max"])
-        # class_data["topk_score_diff_min"].append(layer_data["topk_score_diff_min"])
-
-        class_acc.append(acc1)
-
-        batch_size = images.shape[0]
-        metric_logger.update(loss=loss.item())
-        metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
-        metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
-        # break
-    # gather the stats from all processes
-    metric_logger.synchronize_between_processes()
-    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
-          .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
-
-    class_acc = torch.Tensor(class_acc)
-
-    class_data["class_acc"] = class_acc
-
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}, class_data

@@ -27,7 +27,7 @@ import utils
 import models
 from arguments import add_arguments
 
-import tome
+import merge_module
 
 def main(args):
     # device setting
@@ -47,40 +47,15 @@ def main(args):
 
     cudnn.benchmark = True
 
-    if args.mymodel:
-        # create model
-        model = create_model(
-            args.model_name,
-            pretrained=bool(args.pt_dl),
-            num_classes=args.num_classes,
-            drop_rate=args.dropout,
-            drop_path_rate=args.drop_path,
-            drop_block_rate=None,
-            model_dir=args.pt_dl,
-            distillation_type=args.distillation_type
-        )
-        if args.pt_local is not None:
-            print('start loading pretrained model from local')
-            pretrained = torch.load(args.pt_local, map_location='cpu')
-            pretrained = pretrained['model']
-            utils.load_state_dict(model, pretrained)
-        print('## model has been successfully loaded')
-
-    else:
-        # create model
-        model = create_model(
-            args.model_name,
-            pretrained=bool(args.pt_dl),
-            num_classes=args.num_classes,
-            drop_rate=args.dropout,
-            drop_path_rate=args.drop_path,
-            drop_block_rate=None,
-        )
-        if args.pt_local is not None:
-            print('start loading pretrained model from local')
-            pretrained = torch.load(args.pt_local, map_location='cpu')
-            pretrained = pretrained['model']
-            utils.load_state_dict(model, pretrained)
+    # create model
+    model = create_model(
+        args.model_name,
+        pretrained=bool(args.pt_dl),
+        num_classes=args.num_classes,
+        drop_rate=args.dropout,
+        drop_path_rate=args.drop_path,
+        drop_block_rate=None,
+    )
 
     print('## model has been successfully loaded')
 
@@ -91,38 +66,19 @@ def main(args):
 
     model.to(device)
 
-
     runs = 500
     input_size = (3, args.input_size, args.input_size)
 
+    if args.reduce_num:
+        print(f'r: {args.reduce_num}')
 
-    if args.tome_r:
-        print(f'tome form')
-        print(f'r: {args.tome_r}')
-
-        tome.patch.timm(model)
-
-        # if args.keep_rate < 1:
-        #     drop_loc = eval(args.drop_loc)
-        #     print(f'keep_rate: {args.keep_rate}')
-        #     print(f'drop_loc: {drop_loc}')
-        # if args.trade_off > 0:      # custom 4'
-        #     print(f'tradeoff: {args.trade_off}')
-
-        # tome.patch.timm(model,
-        #                 # base_keep_rate=args.keep_rate,
-        #                 # drop_loc=drop_loc,
-        #                 trade_off=args.trade_off,       # custom 4'
-        #                 )
-
-        model.r = args.tome_r
-        if args.threshold < 100:
-            model.threshold = args.threshold
+        merge_module.patch.timm(model)
+        model.r = args.reduce_num
     else:
-        print('no merge, no prune')
+        print('no merge')
 
     print(f'batch size: {args.batch_size}')
-    tome_result = tome.utils.benchmark(
+    tome_result = merge_module.utils.benchmark(
         model,
         device=device,
         verbose=True,

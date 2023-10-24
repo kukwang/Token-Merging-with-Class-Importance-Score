@@ -32,14 +32,14 @@ from timm.optim import create_optimizer
 from timm.utils import NativeScaler, get_state_dict, ModelEma
 
 import utils
-# import models
+import models
 from arguments import add_arguments
 from loggers import TensorboardLogger
 # from tensorboardX import SummaryWriter
-from engine import train_one_epoch, evaluate, evaluate_with_data
+from engine import train_one_epoch, evaluate
 from losses import DistillLoss
 
-import tome
+import merge_module
 
 def main(args):
     # device setting
@@ -90,74 +90,35 @@ def main(args):
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.num_classes)
 
-    if args.mymodel:
-        # create model
-        print('model implemented by me')
-        model = create_model(
-            args.model_name,
-            pretrained=bool(args.pt_dl),
-            num_classes=args.num_classes,
-            drop_rate=args.dropout,
-            drop_path_rate=args.drop_path,
-            drop_block_rate=None,
-            model_dir=args.pt_dl,
-            distillation_type=args.distillation_type
-        )
-        if args.pt_local is not None:
-            print('start loading pretrained model from local')
-            pretrained = torch.load(args.pt_local, map_location='cpu')
-            pretrained = pretrained['model']
-            utils.load_state_dict(model, pretrained)
-        print('## model has been successfully loaded')
-
-    else:
-        # create model
-        model = create_model(
-            args.model_name,
-            pretrained=bool(args.pt_dl),
-            num_classes=args.num_classes,
-            drop_rate=args.dropout,
-            drop_path_rate=args.drop_path,
-            drop_block_rate=None,
-        )
-        if args.pt_local is not None:
-            print('start loading pretrained model from local')
-            pretrained = torch.load(args.pt_local, map_location='cpu')
-            pretrained = pretrained['model']
-            utils.load_state_dict(model, pretrained)
-        print('## model has been successfully loaded')
+    # create model
+    model = create_model(
+        args.model_name,
+        pretrained=bool(args.pt_dl),
+        num_classes=args.num_classes,
+        drop_rate=args.dropout,
+        drop_path_rate=args.drop_path,
+        drop_block_rate=None,
+    )
+    if args.pt_local is not None:
+        print('start loading pretrained model from local')
+        pretrained = torch.load(args.pt_local, map_location='cpu')
+        pretrained = pretrained['model']
+        utils.load_state_dict(model, pretrained)
+    print('## model has been successfully loaded')
 
     model.to(device)
 
-    if args.tome_r:
-        print(f'tome form')
-        print(f'r: {args.tome_r}')
+    if args.reduce_num:
+        print(f'reduce_num: {args.reduce_num}')
 
         # inference
-        tome.patch.timm(model)
-
-        # if args.keep_rate < 1:
-        #     drop_loc = eval(args.drop_loc)
-        #     print(f'keep_rate: {args.keep_rate}')
-        #     print(f'drop_loc: {drop_loc}')
-        # if args.trade_off > 0:      # custom 4'
-        #     print(f'tradeoff: {args.trade_off}')
-
-        # tome.patch.timm(model,
-        #                 # base_keep_rate=args.keep_rate,
-        #                 # drop_loc=drop_loc,
-        #                 trade_off=args.trade_off,   # custom 4'
-        #                 )
-
-        model.r = args.tome_r
-        if args.threshold > -1:
-            model.threshold = args.threshold
+        merge_module.patch.timm(model)
+        model.r = args.reduce_num
     else:
         print('no merge, no prune')
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    # print("Model = %s" % str(model))
     print(f'model name: {args.model_name}')
     print('number of params:', n_parameters)
 
@@ -284,18 +245,6 @@ def main(args):
                 max_accuracy = eval_stats["acc1"]
             print(f'Max accuracy: {max_accuracy:.2f}%')
 
-            # log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-            #             **{f'eval_{k}': v for k, v in eval_stats.items()},
-            #             'epoch': epoch,
-            #             'n_parameters': n_parameters}
-
-            # if args.save_path and utils.is_main_process():
-            #     save_path = Path(args.save_path)
-            #     with (save_path / "log.txt").open("a") as f:
-            #         f.write(json.dumps(log_stats) + "\n")
-                # writer.add_scalar('test_acc1', eval_stats["acc1"], epoch)
-                # writer.add_scalar('test_acc5', eval_stats["acc5"], epoch)
-
             if args.save_path:
                 utils.save_on_master({
                     'args': args,
@@ -325,55 +274,16 @@ def main(args):
         print('Start evaluation')
         start_time = time.time()
         
-        if args.with_data:      # get data
-            eval_stats, data = evaluate_with_data(val_loader, model, device, args.use_amp)
-            topk_sim = data["topk_sim"]
-            topk_score_diff = data["topk_score_diff"]
-            topk_sim = torch.cat(topk_sim, 1)
-            topk_score_diff = torch.cat(topk_score_diff, 1)
-
-            std, avg = torch.std_mean(topk_sim)
-            diff_std, diff_avg = torch.std_mean(topk_score_diff)
-
-            print(f'std: {std}, avg: {avg}')
-            print(f'topk score diff, std: {diff_std}, avg: {diff_avg}')
-            
-            # topk_sim_avg = torch.Tensor(data["topk_sim_avg"]).transpose(0,1).tolist()
-            # topk_sim_max = torch.Tensor(data["topk_sim_max"]).transpose(0,1).tolist()
-            # topk_sim_min = torch.Tensor(data["topk_sim_min"]).transpose(0,1).tolist()
-
-            # topk_score_avg = torch.Tensor(data["topk_score_avg"]).transpose(0,1).tolist()
-            # topk_score_max = torch.Tensor(data["topk_score_max"]).transpose(0,1).tolist()
-            # topk_score_min = torch.Tensor(data["topk_score_min"]).transpose(0,1).tolist()
-            
-            # topk_score_diff_avg = torch.Tensor(data["topk_score_diff_avg"]).transpose(0,1).tolist()
-            # topk_score_diff_max = torch.Tensor(data["topk_score_diff_max"]).transpose(0,1).tolist()
-            # topk_score_diff_min = torch.Tensor(data["topk_score_diff_min"]).transpose(0,1).tolist()
-
-            # class_acc = torch.Tensor(data["class_acc"]).unsqueeze(0).tolist()
-
-            # utils.export_to_excel(args.save_path, topk_sim_avg, tag='topk_sim_avg')
-            # utils.export_to_excel(args.save_path, topk_sim_max, tag='topk_sim_max')
-            # utils.export_to_excel(args.save_path, topk_sim_min, tag='topk_sim_min')
-            # utils.export_to_excel(args.save_path, topk_score_avg, tag='topk_score_avg')
-            # utils.export_to_excel(args.save_path, topk_score_max, tag='topk_score_max')
-            # utils.export_to_excel(args.save_path, topk_score_min, tag='topk_score_min')
-            # utils.export_to_excel(args.save_path, topk_score_diff_avg, tag='topk_score_diff_avg')
-            # utils.export_to_excel(args.save_path, topk_score_diff_max, tag='topk_score_diff_max')
-            # utils.export_to_excel(args.save_path, topk_score_diff_min, tag='topk_score_diff_min')
-            # utils.export_to_excel(args.save_path, class_acc, tag='class_acc')
-
-        else:
-            eval_stats = evaluate(val_loader, model, device, args.use_amp)
+        eval_stats = evaluate(val_loader, model, device, args.use_amp)
         print(f"Accuracy of the network on the {len(val_set)} eval images: {eval_stats['acc1']:.1f}%")
 
-        # log_stats = {**{f'eval_{k}': v for k, v in eval_stats.items()},
-        #             'n_parameters': n_parameters}
+        log_stats = {**{f'eval_{k}': v for k, v in eval_stats.items()},
+                    'n_parameters': n_parameters}
             
-        # if args.save_path and utils.is_main_process():
-        #     save_path = Path(args.save_path)
-        #     with (save_path / "log.txt").open("a") as f:
-        #         f.write(json.dumps(log_stats) + "\n")
+        if args.save_path and utils.is_main_process():
+            save_path = Path(args.save_path)
+            with (save_path / "log.txt").open("a") as f:
+                f.write(json.dumps(log_stats) + "\n")
 
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
