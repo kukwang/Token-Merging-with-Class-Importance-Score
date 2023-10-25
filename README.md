@@ -45,5 +45,15 @@ We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained ti
 python main.py --model_name ${model_name} --batch_size 128 --input_size 224 --data_path /path/to/imagenet --pt_dl /path/to/download/pretrained/model --reduce_num 13 --eval --use_amp True --dist_eval False
 ```
 
+## Citation
+If you use this repo in your work, please cite:
+```
+@inproceedings{tomecis,
+  title={Token Merging with Class Importance Score},
+  author={Seol, Roh and Chung},
+  booktitle={The 49th Annual Conference of the IEEE Industrial Electronics Society},
+  year={2023}
+}
+
 ## Acknowledgements
 Our code is based on [ToMe](https://github.com/facebookresearch/ToMe).
