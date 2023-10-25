@@ -54,6 +54,7 @@ If you use this repo in your work, please cite:
   booktitle={The 49th Annual Conference of the IEEE Industrial Electronics Society},
   year={2023}
 }
+```
 
 ## Acknowledgements
 Our code is based on [ToMe](https://github.com/facebookresearch/ToMe).
