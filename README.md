@@ -50,7 +50,7 @@ If you use this repo in your work, please cite:
 ```
 @inproceedings{tomecis,
   title={Token Merging with Class Importance Score},
-  author={Seol, Roh and Chung},
+  author={Kwangsoo Seol, Sidong Roh and Kiseok Chung},
   booktitle={The 49th Annual Conference of the IEEE Industrial Electronics Society},
   year={2023}
 }
