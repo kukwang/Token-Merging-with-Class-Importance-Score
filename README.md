@@ -1,4 +1,4 @@
-#  Token Merging using Class Importance Score
+#  Token Merging with Class Importance Score
 
 Pytorch Implementation of ToMeCIS from our paper in IECON 2023 (Not published yet)
 *   Kwangsoo Seol, Sidong Roh, Kiseok Chung
