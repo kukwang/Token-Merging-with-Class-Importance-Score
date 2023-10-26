@@ -3,10 +3,18 @@
 Pytorch Implementation of ToMeCIS from our paper in IECON 2023 (Not published yet)
 *   Kwangsoo Seol, Sidong Roh, Kiseok Chung
 
-## Introduction
-ToMeCIS is token reduction method for Vision Transformer Architectures. It merges similar tokens to accelerate ViTs. It merges similar tokens using Bipartite Soft Matching with class importance score of tokens. We'll upload the link to the paper later.
+## Visualization
 
-![ToMeCIS arch](tomecis_arch.png)
+![vis_example](img/visualization_example.png)
+
+## Introduction
+ToMeCIS is token reduction method for Vision Transformer Architectures. It merges similar tokens to accelerate ViTs. It merges similar tokens with class importance score of tokens. We use Bipartite Soft Matching in [ToMe](https://github.com/facebookresearch/ToMe). We'll upload the link to the paper later.
+
+#### Architecture of ToMeCIS
+![ToMeCIS arch](img/ToMeCIS_arch.png)
+
+#### Bipartite Soft Matching
+![Bipartite Soft Matching](img/BSM.png)
 
 ## Experimental results
 We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained timm model without further training.  Batch size was 128. Parameter r is the reduced number of tokens in every ToMeCIS block.
@@ -25,7 +33,6 @@ We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained ti
 | 15 | 69.642 | 5134.47 |
 | 16 | 69.012 | 5367.96 |
 
-
 ### Experiment on DeiT-S model
 | r  | acc  | img/s |
 |:--:|-------:|----------:|
@@ -40,9 +47,16 @@ We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained ti
 | 15 | 78.522 | 2137.17 |
 | 16 | 78.174 | 2245.69 |
 
-## Evaluation usage
+## Usage
+
+#### Evaluation
 ```
-python main.py --model_name ${model_name} --batch_size 128 --input_size 224 --data_path /path/to/imagenet --pt_dl /path/to/download/pretrained/model --reduce_num 13 --eval --use_amp True --dist_eval False
+python main.py --model_name deit_small_patch16_224 --batch_size 128 --input_size 224 --data_path /path/to/imagenet --pt_dl /path/to/download/pretrained/model --reduce_num 13 --eval --use_amp True --dist_eval False
+```
+
+#### Visualization
+```
+python visualization.py --model_name deit_small_patch16_224 --pt_dl /path/to/download/pretrained/model --reduce_num 13 --img_pth /path/to/image/for/visualization
 ```
 
 ## Citation
