@@ -110,8 +110,6 @@ def main(args):
 
     if args.reduce_num:
         print(f'reduce_num: {args.reduce_num}')
-
-        # inference
         merge_module.patch.timm(model)
         model.r = args.reduce_num
     else:

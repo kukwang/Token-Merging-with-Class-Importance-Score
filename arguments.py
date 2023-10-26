@@ -193,6 +193,8 @@ def add_arguments(parser:argparse.ArgumentParser):
 
     # tomecis params
     parser.add_argument('--reduce_num', type=int, default=0,
-                        help='reduce token number in ToMe (default: 0)')
+                        help='reduce token number in ToMeCIS (default: 0)')
+    parser.add_argument('--img_pth', type=str, default=None,
+                        help='Image path to use for visualization (default: None)')
 
     return parser

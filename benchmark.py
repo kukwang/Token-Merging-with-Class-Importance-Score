@@ -72,13 +72,13 @@ def main(args):
     if args.reduce_num:
         print(f'r: {args.reduce_num}')
 
-        merge_module.patch.timm(model)
+        merge_module.patch.timm(model, args.source_trace)
         model.r = args.reduce_num
     else:
         print('no merge')
 
     print(f'batch size: {args.batch_size}')
-    tome_result = merge_module.utils.benchmark(
+    _ = merge_module.utils.benchmark(
         model,
         device=device,
         verbose=True,

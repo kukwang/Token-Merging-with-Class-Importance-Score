@@ -13,7 +13,9 @@ from typing import Tuple
 
 import torch
 from timm.models.vision_transformer import Attention, Block, VisionTransformer
-from merge_module.merge import bipartite_soft_matching_ToMeCIS, merge_wavg_score
+from merge_module.merge import bipartite_soft_matching_ToMeCIS, merge_wavg_score, merge_source
+from merge_module.utils import parse_r
+
 
 class ToMeCISBlock(Block):
     """
@@ -35,7 +37,7 @@ class ToMeCISBlock(Block):
         # attention part
         x_attn, cls_attn, key, val = self.attn(self.norm1(x), token_size)  # ToMeCIS, tome + ATS weighted sum
 
-        r = self._tomecis_info["r"]         # get reduce token number
+        r = self._tomecis_info["r"].pop(0)  # get reduce token number
         x = x + self._drop_path1(x_attn)    # [B, N+1, C]
         if r > 0:
             """
@@ -51,6 +53,8 @@ class ToMeCISBlock(Block):
                 self._tomecis_info["class_token"],
                 self._tomecis_info["distill_token"],
             )
+            if self._tomecis_info["trace_source"]:
+                self._tomecis_info["source"] = merge_source(merge, x, self._tomecis_info["source"])
 
             x, self._tomecis_info["size"] = merge_wavg_score(merge, x, score_, token_size)    # [B, K, C], [B, K, 1] 
         x = x + self._drop_path2(self.mlp(self.norm2(x)))
@@ -97,7 +101,7 @@ def make_tomecis_class(transformer_class):
         """
 
         def forward(self, *args, **kwdargs) -> torch.Tensor:
-            self._tomecis_info["r"] = self.r
+            self._tomecis_info["r"] = parse_r(len(self.blocks), self.r)
             self._tomecis_info["size"] = None
             self._tomecis_info["source"] = None
             

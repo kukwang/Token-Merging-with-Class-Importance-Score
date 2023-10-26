@@ -3,6 +3,8 @@
 *.pth
 *.sh
 
+test.py
+
 logs
 profiles
 model_structures
