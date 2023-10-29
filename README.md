@@ -21,7 +21,7 @@ We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained ti
 
 ### Experiment on DeiT-Ti model.
 | r  | acc  | img/s |
-|:--:|-------:|----------:|
+|:--:|:-------:|:----------:|
 | 0 (baseline)  | 72.132 | 3342.88 |
 | 8  | 71.614 | 3795.99 |
 | 9  | 71.356 | 3944.83 |
@@ -35,7 +35,7 @@ We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained ti
 
 ### Experiment on DeiT-S model
 | r  | acc  | img/s |
-|:--:|-------:|----------:|
+|:--:|:-------:|:----------:|
 | 0 (baseline)  | 79.82 | 1283.4 |
 | 8  |  79.43 | 1553.46 |
 | 9  | 79.374 | 1609.55 |
