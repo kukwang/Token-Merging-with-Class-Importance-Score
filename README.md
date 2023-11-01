@@ -18,7 +18,7 @@ ToMeCIS is token reduction method for Vision Transformer Architectures. It merge
 
 * **Class importance score calculation**
 
-![Class Importance Score Calculation](img/CIS_calc.png){: width="50%" height="50%"}
+![Class Importance Score Calculation](img/CIS_calc.png)
 
 - **_A_**: Attention matrix
 - **_V_**: Value matrix
