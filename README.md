@@ -21,8 +21,8 @@ ToMeCIS is token reduction method for Vision Transformer Architectures. It merge
 
 * _A_: Attention matrix
 * _V_: Value matrix
-* _A<sub>cls<\sub>_: First row of attention matrix
-* _S<sub>cls<\sub>_: Class attention score 
+* _A<sub>cls_: First row of attention matrix
+* _S<sub>cls_: Class attention score 
 
 
 ## Experimental results
