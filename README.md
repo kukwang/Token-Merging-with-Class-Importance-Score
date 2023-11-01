@@ -16,6 +16,15 @@ ToMeCIS is token reduction method for Vision Transformer Architectures. It merge
 #### Bipartite Soft Matching
 ![Bipartite Soft Matching](img/BSM.png)
 
+#### Class importance score calculation
+![Class Importance Score Calculation](ing/CIS_calc.png)
+
+* _A_: Attention matrix
+* _V_: Value matrix
+* _{A_{cls}}_: First row of attention matrix
+* _{S_{cls}}_: Class attention score 
+
+
 ## Experimental results
 We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained timm model without further training.  Batch size was 128. Parameter r is the reduced number of tokens in every ToMeCIS block.
 
@@ -74,4 +83,6 @@ If you use this repo in your work, please cite:
 ```
 
 ## Acknowledgements
-Our code is based on [ToMe](https://github.com/facebookresearch/ToMe).
+Our code is based on:
+1. [ToMe](https://github.com/facebookresearch/ToMe) for bipartite soft matching
+2. [ATS](https://github.com/adaptivetokensampling/ATS) for score calculation
