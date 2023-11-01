@@ -29,15 +29,16 @@ ToMeCIS is token reduction method for Vision Transformer Architectures. It merge
 
 
 ## Experimental results
-We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained timm model without further training.  Batch size was 128. Parameter r is the reduced number of tokens in every ToMeCIS block.
+We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained timm model. No additional training was performed after applying ToMeCIS. We used a batch size of 128 for all experiments.
+- r: Reduced number of tokens in every ToMeCIS block.
 
 ### Experiment on DeiT-Ti model.
-| r  | acc  | img/s |
+| r  | acc <br> (%)  | throughput <br> (img/s) |
 |:--:|:-------:|:----------:|
-| 0 (baseline)  | 72.132 | 3342.88 |
+| 0 <br> (baseline)  | 72.132 | 3342.88 |
 | 8  | 71.614 | 3795.99 |
 | 9  | 71.356 | 3944.83 |
-| 10 | 71.28 | 4107.27 |
+| 10 | 71.28  | 4107.27 |
 | 11 | 71.012 | 4272.49 |
 | 12 | 70.934 | 4461.66 |
 | 13 | 70.594 | 4672.44 |
@@ -46,9 +47,9 @@ We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained ti
 | 16 | 69.012 | 5367.96 |
 
 ### Experiment on DeiT-S model
-| r  | acc  | img/s |
+| r  | acc <br> (%)  | throughput <br> (img/s) |
 |:--:|:-------:|:----------:|
-| 0 (baseline)  | 79.82 | 1283.4 |
+| 0 <br> (baseline)  | 79.82 | 1283.4 |
 | 8  |  79.43 | 1553.46 |
 | 9  | 79.374 | 1609.55 |
 | 10 | 79.228 | 1684.36 |
@@ -58,6 +59,19 @@ We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained ti
 | 14 | 78.696 | 2027.89 |
 | 15 | 78.522 | 2137.17 |
 | 16 | 78.174 | 2245.69 |
+
+### Performance comparison with other token reduction methods 
+
+We compared other token reduction methods. These methods are applied to pretrained DeiT-S model. No additional training was performed after applying token reduction methods.
+We set the reduction rate to have a similar throughput.
+
+| Method | acc <br> (%) | throughput <br> (img/s) |
+|:------:|:---:|:----------:|
+| DeiT-S         | 79.82          | 1282.5        |
+| DeiT-S-EViT    | 78.52 (-1.3%)  | 1872.3 (+46%) |
+| DeiT-S-ToMe    | 78.79 (-1.03%) | 1956.1 (+53%) |
+| DeiT-S-ToMeCIS | 78.90 (-0.92%) | 1949.6 (+53%) |
+
 
 ## Usage
 
