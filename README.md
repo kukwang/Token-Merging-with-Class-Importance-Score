@@ -10,14 +10,16 @@ Pytorch Implementation of ToMeCIS from our paper in IECON 2023
 ## Introduction
 ToMeCIS is token reduction method for Vision Transformer Architectures. It merges similar tokens to accelerate ViTs. It merges similar tokens with class importance score of tokens. We use Bipartite Soft Matching in [ToMe](https://github.com/facebookresearch/ToMe). We'll upload the link to the paper later.
 
+
 * **Architecture of ToMeCIS**
 ![ToMeCIS arch](img/ToMeCIS_arch.png)
+
 
 * **Bipartite Soft Matching**
 ![Bipartite Soft Matching](img/BSM.png)
 
-* **Class importance score calculation**
 
+* **Class importance score calculation**
 <img src = "https://github.com/kukwang/Token-Merging-with-Class-Importance-Score/assets/52880303/3706077e-8dff-4fe0-9de4-167e79c0a48c" width="50%" height="50%">
 
 - **_A_**: Attention matrix
