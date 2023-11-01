@@ -17,7 +17,8 @@ ToMeCIS is token reduction method for Vision Transformer Architectures. It merge
 ![Bipartite Soft Matching](img/BSM.png)
 
 * **Class importance score calculation**
-<img src="img/CIS_calc.png" width="50%" height="50%"\>
+
+<img src="img/CIS_calc.png" width="200" height="100"\>
 
 - **_A_**: Attention matrix
 - **_V_**: Value matrix
