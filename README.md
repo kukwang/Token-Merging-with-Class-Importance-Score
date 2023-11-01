@@ -51,12 +51,15 @@ We experimented on ImageNet-1k using one GeForce RTX 3090. We used pretrained ti
 
 #### Evaluation
 ```
-python main.py --model_name deit_small_patch16_224 --batch_size 128 --input_size 224 --data_path /path/to/imagenet --pt_dl /path/to/download/pretrained/model --reduce_num 13 --eval --use_amp True --dist_eval False
+python main.py --model_name deit_small_patch16_224 --batch_size 128 --input_size 224 --reduce_num 13 \
+--data_path /path/to/imagenet --pt_dl /path/to/download/pretrained/model \
+--eval --use_amp False --dist_eval False
 ```
 
 #### Visualization
 ```
-python visualization.py --model_name deit_small_patch16_224 --pt_dl /path/to/download/pretrained/model --reduce_num 13 --img_pth /path/to/image/for/visualization
+python visualization.py --model_name deit_small_patch16_224 --reduce_num 13 \
+--img_pth /path/to/image/for/visualization --pt_dl /path/to/download/pretrained/model \
 ```
 
 ## Citation
