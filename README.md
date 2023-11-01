@@ -59,7 +59,7 @@ python main.py --model_name deit_small_patch16_224 --batch_size 128 --input_size
 #### Visualization
 ```
 python visualization.py --model_name deit_small_patch16_224 --reduce_num 13 \
---img_pth /path/to/image/for/visualization --pt_dl /path/to/download/pretrained/model \
+--img_pth /path/to/image/for/visualization --pt_dl /path/to/download/pretrained/model
 ```
 
 ## Citation
