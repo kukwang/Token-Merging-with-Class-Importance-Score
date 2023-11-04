@@ -69,8 +69,8 @@ We set the reduction rate to have a similar throughput.
 |:------|:---:|:----------:|
 | DeiT-S         | 79.82          | 1282.5        |
 | DeiT-S-EViT    | 78.52 (-1.3)  | 1872.3 (+46%) |
-| DeiT-S-ToMe    | 78.79 (-1.03) | 1956.1 (+53%) |
-| DeiT-S-ToMeCIS | 78.90 (-0.92) | 1949.6 (+53%) |
+| DeiT-S-ToMe    | 78.79 (-1.03) | 1956.1 (+52.5%) |
+| DeiT-S-ToMeCIS | 78.90 (-0.92) | 1949.6 (+52%) |
 
 
 ## Usage
